@@ -36,6 +36,10 @@ class Navigation:
             self._index -= 1
         return self.current
 
+    def replace_current(self, path: Path | ArchiveLocation) -> None:
+        """Collapse automatic folder descent into the current history entry."""
+        self._history[self._index] = path
+
     def forward(self) -> Path | ArchiveLocation | None:
         if self.can_forward:
             self._index += 1

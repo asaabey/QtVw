@@ -49,6 +49,7 @@ class MainWindow(QMainWindow):
         self._cache_busy = False
         self._maintenance = None
         self._listing_active = False
+        self._descent_seen = None
         self._after_clear_reload = False
         self._resume_thumbnails = False
         self.navigation = Navigation()
@@ -111,7 +112,9 @@ class MainWindow(QMainWindow):
         for column in range(1, self.folders.columnCount()):
             self.tree.hideColumn(column)
         self.tree.setHeaderHidden(True)
-        self.tree.clicked.connect(lambda index: self.navigate(Path(self.folders.filePath(index))))
+        self.tree.clicked.connect(
+            lambda index: self.navigate(Path(self.folders.filePath(index)), auto_descend=True)
+        )
         self.splitter = QSplitter()
         self.splitter.addWidget(self.tree)
         self.splitter.addWidget(self.stack)
@@ -210,15 +213,20 @@ class MainWindow(QMainWindow):
         directory = current.path.parent if isinstance(current, ArchiveLocation) else current
         path = QFileDialog.getExistingDirectory(self, "Choose image folder", str(directory))
         if path:
-            self.navigate(Path(path))
+            self.navigate(Path(path), auto_descend=True)
 
-    def navigate(self, path):
+    def navigate(self, path, auto_descend=False):
         logging.getLogger(__name__).info("Navigate: %s", path)
         self._restore_state = None
         if not isinstance(path, ArchiveLocation):
             path = Path(path).expanduser().absolute()
         self.navigation.navigate(path)
-        self._load(path)
+        seen = {self._descent_key(path)} if auto_descend else None
+        self._load(path, descent_seen=seen)
+
+    @staticmethod
+    def _descent_key(path):
+        return path if isinstance(path, ArchiveLocation) else Path(path).resolve()
 
     def open_location(self):
         try:
@@ -232,7 +240,8 @@ class MainWindow(QMainWindow):
         except ValueError as error:
             self.statusBar().showMessage(str(error))
 
-    def _load(self, path):
+    def _load(self, path, descent_seen=None):
+        self._descent_seen = descent_seen
         self._refresh_timer.stop()
         self.show_grid()
         self.workers.cancel()
@@ -286,6 +295,19 @@ class MainWindow(QMainWindow):
         if generation != self.generation:
             return
         self._listing_active = False
+        seen = self._descent_seen
+        self._descent_seen = None
+        if not error and seen is not None and len(seen) < 64 and self.model.rowCount() == 1:
+            entry = self.model.entries[0]
+            if entry.kind == "folder":
+                target = entry.location
+                key = self._descent_key(target)
+                if key not in seen:
+                    seen.add(key)
+                    logging.getLogger(__name__).info("Automatically descend: %s", target)
+                    self.navigation.replace_current(target)
+                    self._load(target, descent_seen=seen)
+                    return
         self.model.sort()
         if self.stack.currentWidget() == self.browser or error:
             self.statusBar().showMessage(error or f"{self.model.rowCount()} items")
@@ -365,7 +387,7 @@ class MainWindow(QMainWindow):
             return
         entry = self.model.entries[index.row()]
         if entry.kind == "folder" or (entry.kind == "archive" and entry.member is None):
-            self.navigate(entry.location)
+            self.navigate(entry.location, auto_descend=True)
         elif entry.kind == "image":
             self.open_image(entry)
         else:

@@ -329,6 +329,29 @@ and saved smoothing preferences. Ruff lint and formatting pass.
 The user reported successful testing on Ubuntu 25.10 with Python 3.13. Architecture,
 driver details, and release performance acceptance remain unverified.
 
+### Follow-up: folder descent and a per-user Linux installer
+
+Opening a folder from the grid, sidebar, or chooser follows single-folder chains
+using completed asynchronous listings. Local and ZIP locations stop at images,
+multiple visible items, errors, empty directories, repeated targets, or 64 visited
+locations. Intermediate locations replace the current history entry so Back
+returns to the origin. Up, refresh, startup, and history loads retain their exact
+locations. Six GUI regression cases cover descent and stopping/history behavior.
+
+`install.sh` now invokes `packaging/install.py`: a private venv, a non-editable
+source install, a shell launcher, and a freedesktop app-menu entry. Rerunning
+updates the installation; `--uninstall` removes installer-managed files and keeps
+preferences, caches, logs, and source images. Unmanaged destinations are refused.
+Installation stages only package sources and metadata, excluding sample files.
+This is a source installer, not completion of standalone release packaging.
+
+Validation on macOS: **87 passed, 1 skipped**, Ruff checks, and shell syntax pass.
+Installer tests mock dependency installation and verify layout, updates, launcher
+argument handling with spaces, removal, and unmanaged-file protection. A real
+dependency-free wheel install in a fresh venv verifies both CLI help entry points
+after removing the staging source. Native Ubuntu dependency installation, desktop
+launch integration, and separate architecture validation remain pending.
+
 ### Commands
 
 Milestone 1 configures the following commands. Create the virtual environment with Python 3.10 or newer (substitute your installed interpreter):

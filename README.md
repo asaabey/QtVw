@@ -11,7 +11,73 @@ and can be browsed directly, including internal folders and Unicode filenames.
 Thumbnails and archive indexes persist between sessions, and background jobs
 prioritise the current view. Saved preferences include sorting, appearance,
 startup behavior, cache controls, and resource limits. Ubuntu packaging and
-release performance validation remain milestone 5.
+release performance validation remain milestone 5. A per-user Ubuntu installer
+is available below.
+
+## Install on Ubuntu
+
+Clone the repository and run the installer:
+
+```sh
+git clone https://github.com/asaabey/QtVw.git
+cd QtVw
+./install.sh
+```
+
+Alternatively, download and extract the repository's source ZIP, open a terminal
+in the extracted folder, and run `sh install.sh`.
+
+Then open **QtVw** from your app menu. No virtual environment activation is needed.
+The installer requires Python 3.10+, internet access to download dependencies, and
+a desktop session to run the app. Run it as your normal user, without `sudo`.
+If Python's venv support is missing, install it once and retry:
+
+```sh
+sudo apt install python3-venv
+./install.sh
+```
+
+Ubuntu provides [python3-venv](https://packages.ubuntu.com/questing/python3-venv)
+for its default Python. To select another supported interpreter, run
+`PYTHON=python3.13 ./install.sh` with matching venv support installed.
+
+QtVw and its Python dependencies live in `~/.local/share/qtvw/venv/`, with a
+launcher at `~/.local/bin/qtvw` and an app-menu entry in
+`~/.local/share/applications/qtvw.desktop`. The source folder can be removed
+after installation. If `qtvw` is not on PATH, use the app menu or run
+`~/.local/bin/qtvw` directly. Folder and ZIP "Open With" integration is registered
+without changing your default applications.
+
+### Update
+
+Close QtVw, then run these commands from your cloned repository:
+
+```sh
+git pull --ff-only
+./install.sh
+```
+
+If you installed from a source ZIP, download and extract the latest source and
+run `sh install.sh` from that folder.
+
+### Uninstall
+
+From a cloned or extracted source folder, run:
+
+```sh
+sh install.sh --uninstall
+```
+
+Preferences, cache, logs, and original images are preserved. If you deleted the
+source folder after installing, download or clone it again to run the uninstaller.
+
+### Troubleshooting
+
+This installs from source; standalone `.deb` and AppImage downloads are not yet
+available. Linux desktop integration still needs native Ubuntu installer testing.
+If Qt reports missing platform libraries, see its
+[Linux requirements](https://doc.qt.io/qt-6.12/linux-requirements.html);
+an `xcb-cursor` error commonly requires `sudo apt install libxcb-cursor0`.
 
 ## Development setup
 
@@ -33,9 +99,16 @@ Qt needs a desktop session for interactive use. On Ubuntu, install the runtime
 libraries required by Qt's platform plugin if launch reports missing libraries.
 JPEG, PNG, WebP, BMP, and TIFF decoding depends on the Qt plugins available in the
 installed PySide6 distribution. Ubuntu ARM64 and x86-64 builds require separate
-validation; there are no distributable packages yet.
+validation; there are no standalone distributable packages yet.
 
-## Browsing ZIP archives
+## Browsing folders and ZIP archives
+
+Opening a folder from the grid, sidebar, or folder chooser automatically follows
+single-subfolder chains until images, multiple visible items, or an empty folder
+are reached. This also works inside ZIP archives and respects hidden-file visibility.
+Back returns to the location before opening the chain; Up visits each parent
+without automatically descending again. Refresh and history navigation preserve
+the requested location. Descent stops at repeated locations or 64 visited folders.
 
 Double-click an archive to open it, then navigate its folders and images normally.
 The location field displays paths such as `/photos/Holiday.zip › Day 1`; Up from
@@ -54,8 +127,8 @@ entries and folders, a 16 MiB central directory, 64 MiB per decompressed entry,
 64 path components, and 4,096 characters per path. Cover searches try at most 256
 candidates with a total 128 MiB decompressed input budget. Unsafe paths and
 symlink entries are excluded. The existing 64-million-pixel decode limit applies
-to archived images too. Limits currently require code configuration; the settings
-interface comes later.
+to archived images too. Decoded-pixel, input-size, and decompressed-entry limits
+are configurable in Preferences; the remaining archive limits require code changes.
 
 ## Caching and background work
 
