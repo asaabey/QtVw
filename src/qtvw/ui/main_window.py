@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
     QSplitter,
     QStackedWidget,
     QToolBar,
-    QTreeView,
 )
 
 from qtvw.cache import CacheStore
@@ -30,10 +29,12 @@ from qtvw.domain.locations import (
 from qtvw.domain.preferences import Preferences
 from qtvw.services import Navigation, WorkerService
 from qtvw.services.archive_edit import ArchiveEditService
+from qtvw.services.file_moves import FileMoveService
 from qtvw.services.scheduler import NEARBY, OPEN_IMAGE, PRELOAD, VISIBLE, PriorityExecutor
 from qtvw.sources.archive import ArchiveLimits
 from qtvw.ui.archive_delete import ArchiveDeleteProgress
 from qtvw.ui.browser import Browser, BrowserModel
+from qtvw.ui.file_moves import FileMoveProgress, FolderTree
 from qtvw.ui.help import HelpDialog
 from qtvw.ui.preferences import PreferencesDialog, apply_appearance
 from qtvw.ui.viewer import ImageViewer
@@ -59,6 +60,9 @@ class MainWindow(QMainWindow):
         self._close_after_edit = False
         self._orientation_generation = 0
         self._orientation_pending = None
+        self._file_moving = False
+        self._move_progress = None
+        self._close_after_move = False
         self._after_clear_reload = False
         self._resume_thumbnails = False
         self.navigation = Navigation()
@@ -73,6 +77,9 @@ class MainWindow(QMainWindow):
         self.archive_editor = ArchiveEditService(self.cache, limits, self)
         self.archive_editor.progress.connect(self._archive_delete_progress)
         self.archive_editor.finished.connect(self._archive_delete_finished)
+        self.file_mover = FileMoveService(self.cache, self)
+        self.file_mover.progress.connect(self._file_move_progress)
+        self.file_mover.finished.connect(self._file_move_finished)
         self.workers = WorkerService(
             self, archive_limits=limits, cache=self.cache, scheduler=self.scheduler
         )
@@ -110,6 +117,7 @@ class MainWindow(QMainWindow):
         self.browser.setModel(self.model)
         self.browser.activated.connect(self._open_index)
         self.browser.visible_changed.connect(self._schedule_thumbnails)
+        self.browser.zip_files_dropped.connect(self.move_zip_files)
         mode = "software" if software_rendering else self.preferences.rendering
         self.viewer = ImageViewer(
             rendering_mode=mode, smooth_scaling=self.preferences.smooth_scaling
@@ -121,7 +129,8 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
         self.stack.addWidget(self.browser)
         self.stack.addWidget(self.viewer)
-        self.tree = QTreeView()
+        self.tree = FolderTree()
+        self.tree.zip_files_dropped.connect(self.move_zip_files)
         self.folders = QFileSystemModel(self)
         self.folders.setFilter(QDir.Filter.AllDirs | QDir.Filter.NoDotAndDotDot)
         self.folders.setRootPath(QDir.rootPath())
@@ -282,6 +291,7 @@ class MainWindow(QMainWindow):
     def _load(self, path, descent_seen=None):
         self._cancel_orientation_selection()
         self._descent_seen = descent_seen
+        self.browser.directory = None if isinstance(path, ArchiveLocation) else path
         self._refresh_timer.stop()
         self.show_grid()
         self.workers.cancel()
@@ -383,6 +393,8 @@ class MainWindow(QMainWindow):
             self._thumbnail_timer.start(0)
 
     def _request_visible(self):
+        if self._file_moving or self._archive_editing:
+            return
         if self._cache_busy:
             self._resume_thumbnails = True
             return
@@ -528,6 +540,7 @@ class MainWindow(QMainWindow):
     def select_orientation(self, orientation):
         if (
             self._archive_editing
+            or self._file_moving
             or self._listing_active
             or self.stack.currentWidget() != self.browser
         ):
@@ -569,6 +582,7 @@ class MainWindow(QMainWindow):
             return
         enabled = (
             not self._archive_editing
+            and not self._file_moving
             and self._orientation_pending is None
             and not self._listing_active
             and self.stack.currentWidget() == self.browser
@@ -579,6 +593,7 @@ class MainWindow(QMainWindow):
     def delete_selected_images(self):
         if (
             self._archive_editing
+            or self._file_moving
             or self._listing_active
             or self._orientation_pending is not None
             or self.stack.currentWidget() != self.browser
@@ -627,6 +642,8 @@ class MainWindow(QMainWindow):
             return
         self._cancel_orientation_selection()
         self._archive_editing = True
+        self.browser.zip_drops_enabled = False
+        self.tree.zip_drops_enabled = False
         self._refresh_timer.stop()
         self.workers.cancel()
         self.image_workers.cancel()
@@ -646,6 +663,8 @@ class MainWindow(QMainWindow):
 
     def _archive_delete_finished(self, result, error, cancelled):
         self._archive_editing = False
+        self.browser.zip_drops_enabled = True
+        self.tree.zip_drops_enabled = True
         if self._delete_progress is not None:
             self._delete_progress.accept()
             self._delete_progress.deleteLater()
@@ -678,6 +697,60 @@ class MainWindow(QMainWindow):
             self._delete_error = dialog
             dialog.open()
 
+    def move_zip_files(self, paths, directory):
+        if self._closing or self._file_moving or self._archive_editing or not paths:
+            return
+        self._file_moving = True
+        self.browser.zip_drops_enabled = False
+        self.tree.zip_drops_enabled = False
+        self._cancel_orientation_selection()
+        self._refresh_timer.stop()
+        self._thumbnail_timer.stop()
+        self.workers.cancel()
+        self.image_workers.cancel()
+        self.generation += 1
+        self.viewer_generation += 1
+        self.requested.clear()
+        self._update_delete_action()
+        self._move_progress = FileMoveProgress(self.file_mover, self)
+        apply_appearance(self._move_progress, self.preferences.appearance)
+        self._move_progress.open()
+        self.file_mover.start(paths, directory)
+
+    def _file_move_progress(self, position, total, name):
+        if self._move_progress is not None:
+            self._move_progress.update_file(position, total, name)
+
+    def _file_move_finished(self, moved, errors, stopped):
+        self._file_moving = False
+        self.browser.zip_drops_enabled = True
+        self.tree.zip_drops_enabled = True
+        self._move_progress.accept()
+        self._move_progress.deleteLater()
+        self._move_progress = None
+        for source, destination in moved:
+            self.navigation.relocate_archive(source, destination)
+        if self._close_after_move:
+            self.close()
+            return
+        self._restore_state = None
+        self.refresh()
+        message = f"Moved {len(moved)} ZIP file(s)"
+        if errors:
+            message += f"; {len(errors)} could not be moved"
+        if stopped:
+            message += "; stopped after the current file"
+        self.statusBar().showMessage(message)
+        if errors:
+            dialog = QMessageBox(self)
+            dialog.setWindowTitle("Some ZIP files could not be moved")
+            dialog.setIcon(QMessageBox.Icon.Warning)
+            dialog.setTextFormat(Qt.TextFormat.PlainText)
+            dialog.setText("\n".join(errors[:10]))
+            dialog.setInformativeText("Existing destination files were not overwritten.")
+            self._move_error = dialog
+            dialog.open()
+
     def _watch_sources(self):
         current = self.navigation.current
         paths = {str(current.path if isinstance(current, ArchiveLocation) else current)}
@@ -694,7 +767,7 @@ class MainWindow(QMainWindow):
             self.watcher.addPaths(sorted(paths - existing))
 
     def _source_dirty(self, *_args):
-        if not self._closing and not self._archive_editing:
+        if not self._closing and not self._archive_editing and not self._file_moving:
             self._refresh_timer.start()
 
     def _browser_source_changed(self, generation, _path):
@@ -706,7 +779,7 @@ class MainWindow(QMainWindow):
             self._source_dirty()
 
     def _reload_changed_source(self):
-        if self._archive_editing:
+        if self._archive_editing or self._file_moving:
             return
         selected = self.browser.currentIndex()
         identity = self.model.entries[selected.row()].identity if selected.isValid() else None
@@ -852,6 +925,11 @@ class MainWindow(QMainWindow):
             self.show_grid()
 
     def closeEvent(self, event):
+        if self._file_moving:
+            self._close_after_move = True
+            self._move_progress.reject()
+            event.ignore()
+            return
         if self._archive_editing:
             self._close_after_edit = True
             self._delete_progress.reject()
@@ -873,6 +951,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue("hidden", self.hidden_action.isChecked())
         self.settings.sync()
         self.archive_editor.shutdown()
+        self.file_mover.shutdown()
         self.workers.shutdown()
         self.image_workers.shutdown()
         self.selection_workers.shutdown()

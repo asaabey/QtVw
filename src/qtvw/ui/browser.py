@@ -6,16 +6,19 @@ from PySide6.QtCore import (
     QAbstractListModel,
     QItemSelection,
     QItemSelectionModel,
+    QMimeData,
     QModelIndex,
     QRect,
     QSize,
     Qt,
+    QUrl,
     Signal,
 )
-from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
+from PySide6.QtGui import QColor, QDrag, QFont, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QListView, QStyle
 
 from qtvw.domain import natural_key
+from qtvw.ui.file_moves import ZipDropTarget
 
 
 class BrowserModel(QAbstractListModel):
@@ -31,6 +34,17 @@ class BrowserModel(QAbstractListModel):
 
     def rowCount(self, parent=QModelIndex()):
         return 0 if parent.isValid() else len(self.entries)
+
+    def flags(self, index):
+        flags = super().flags(index)
+        if index.isValid():
+            entry = self.entries[index.row()]
+            if entry.member is None:
+                if entry.kind == "archive":
+                    flags |= Qt.ItemFlag.ItemIsDragEnabled
+                elif entry.kind == "folder":
+                    flags |= Qt.ItemFlag.ItemIsDropEnabled
+        return flags
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
         if not index.isValid():
@@ -137,8 +151,9 @@ def archive_badge(pixmap):
     return result
 
 
-class Browser(QListView):
+class Browser(ZipDropTarget, QListView):
     visible_changed = Signal()
+    zip_files_dropped = Signal(list, object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -149,6 +164,10 @@ class Browser(QListView):
         self.setUniformItemSizes(True)
         self.setWordWrap(False)
         self.setSelectionMode(QListView.SelectionMode.ExtendedSelection)
+        self.directory = None
+        self.setup_zip_drops()
+        self.setDragEnabled(True)
+        self.setProperty("qtvw_zip_drag", True)
         self.verticalScrollBar().valueChanged.connect(self.visible_changed)
         self.set_thumbnail_size(144)
 
@@ -158,6 +177,33 @@ class Browser(QListView):
         self.setIconSize(QSize(size, size))
         self.setGridSize(QSize(size + 32, size + 48))
         self.visible_changed.emit()
+
+    def folder_at(self, position):
+        index = self.indexAt(position)
+        if index.isValid():
+            entry = self.model().entries[index.row()]
+            folder = entry.path if entry.kind == "folder" and entry.member is None else None
+            return folder, index
+        return self.directory, index
+
+    def startDrag(self, supported_actions):
+        if not self.zip_drops_enabled:
+            return
+        entries = [self.model().entries[index.row()] for index in self.selectedIndexes()]
+        if not entries or any(
+            entry.kind != "archive" or entry.member is not None for entry in entries
+        ):
+            return
+        mime = QMimeData()
+        mime.setUrls([QUrl.fromLocalFile(str(entry.path)) for entry in entries])
+        drag = QDrag(self)
+        drag.setMimeData(mime)
+        try:
+            drag.exec(Qt.DropAction.CopyAction | Qt.DropAction.MoveAction, Qt.DropAction.MoveAction)
+        finally:
+            drag.deleteLater()
+        # The drop receiver moves files. Never remove sources here: a transfer
+        # may still be running, or a file manager may already have moved them.
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

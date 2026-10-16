@@ -7,6 +7,7 @@ QtVw is a desktop image browser for Ubuntu that lets users browse folders and vi
 The initial release will support:
 
 - Browsing local folders and subfolders.
+- Moving ZIP files between filesystem folders with drag and drop.
 - Displaying ZIP archives alongside ordinary image files.
 - Showing a representative thumbnail for each ZIP archive.
 - Browsing images and folders inside ZIP archives.
@@ -62,6 +63,21 @@ Users must be able to:
 Folder contents must load progressively. The application must not recursively scan an entire directory tree at startup.
 
 Hidden files will be excluded by default, with an option to show them. Symbolic links must not cause recursive traversal loops.
+
+### Moving ZIP files
+
+Drag one or more local ZIP thumbnails onto a filesystem folder in the grid or
+sidebar. Hovering over a collapsed sidebar folder expands it. Accept local ZIP
+URLs from desktop file managers onto those folders or empty space in a local
+folder grid. Reject mixed non-ZIP drops, symbolic-link sources, and archive
+subfolders as destinations. A drop moves entire archives without changing their
+contents. Existing destination names must never be overwritten.
+
+Run moves outside the GUI thread, using a no-overwrite operation with a cross-device
+copy fallback. Report per-file progress and errors; one conflict must not prevent
+other files from moving. Stop/close finishes the current file before skipping
+the remaining batch. Refresh affected caches/listings and update archive history
+and the current archive path after a successful move.
 
 ## 5. ZIP archive browsing
 

@@ -414,6 +414,39 @@ headers, size limits, empty folders, all EXIF transforms, cancellation/supersedi
 late results, source changes, and the orientation-to-confirmed-delete workflow.
 Ruff lint and formatting pass. Native Ubuntu verification remains pending.
 
+### Follow-up: drag and drop ZIP files between folders
+
+ZIP thumbnails export local file URLs. The grid accepts drops onto local folder
+tiles or empty space in a local folder, and the filesystem sidebar accepts folder
+rows with delayed hover expansion. Drop targets show an outline. Mixed/non-local
+URLs, archive-member destinations, and non-ZIP selections are rejected. All
+accepted drops move whole files; ZIP payloads are not rewritten or extracted.
+
+`services/file_moves.py` uses one background executor and `QFile.rename`, which
+refuses existing filenames and provides Qt's cross-filesystem copy/remove fallback.
+Sources must be regular ZIP files. A nonblocking advisory lock prevents concurrent
+cooperative edits/moves, and source identity is checked before moving. Each success
+invalidates caches for both paths and relocates archive history, including an open
+archive's internal folder. Per-file failures do not stop other files in the batch.
+Progress and Stop after current file keep the GUI responsive; closing requests the
+same stop and waits asynchronously before shutting down.
+
+The drop receiver owns the entire move. Internal QtVw drags acknowledge Move;
+external URL drops acknowledge Copy so another application cannot delete the source
+on an asynchronous acknowledgement. The receiver still performs the documented
+move, and the QtVw drag source never removes files after `QDrag.exec` returns.
+
+Validation on macOS ARM64: **160 passed, 2 skipped** offscreen and **3 passed** on
+native Cocoa for grid/sidebar drops and moving an open archive. The new checks
+exercise real Qt drop events, source MIME URLs, multiple ZIPs, external/background
+drops, hover expansion, unchanged bytes/permissions, existing/late conflicts,
+symbolic links, invalid targets, editing locks, partial batches, history relocation,
+and stop/close responsiveness. Ruff lint/formatting pass. The skips require native
+OpenGL and a second writable filesystem (`/dev/shm` is used when available).
+Native Ubuntu pointer/file-manager interaction and cross-filesystem moves remain
+unverified here; the conditional cross-filesystem test runs when a suitable second
+filesystem is available. Existing milestone 5 platform/release checks remain pending.
+
 ### Commands
 
 Milestone 1 configures the following commands. Create the virtual environment with Python 3.10 or newer (substitute your installed interpreter):

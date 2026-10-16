@@ -130,6 +130,26 @@ symlink entries are excluded. The existing 64-million-pixel decode limit applies
 to archived images too. Decoded-pixel, input-size, and decompressed-entry limits
 are configurable in Preferences; the remaining archive limits require code changes.
 
+## Moving ZIP files with drag and drop
+
+Drag a ZIP thumbnail onto a folder in the grid or onto a folder in the filesystem
+sidebar. Hover over a collapsed sidebar folder to expand it. Use Ctrl+click to
+select several ZIPs and drag them together; the selection must contain ZIP files
+only. Dropping ZIPs from a desktop file manager onto a folder, or onto empty space
+in the grid of a local folder, also moves them into that folder.
+
+Accepted drops **move the ZIP files**, leaving their contents unchanged. They do
+not copy archives or extract images. An existing destination filename is never
+overwritten; the conflicting source stays in place, and other files in the batch
+can still move. Regular local `.zip` files are supported; source symbolic links
+and drops into ZIP contents are excluded.
+
+Moves run in the background. Transfers between filesystems may need copying and
+additional disk space. **Stop after current file** skips the remaining files;
+the current move finishes first. Closing the app follows the same rule. Listings
+and caches refresh after moving, and history/current archive locations follow
+ZIPs moved through QtVw. Desktop drag behavior still needs native Ubuntu testing.
+
 ## Selecting and deleting images inside ZIPs
 
 In the thumbnail grid, use **Ctrl+click** to toggle individual selections or

@@ -40,6 +40,15 @@ class Navigation:
         """Collapse automatic folder descent into the current history entry."""
         self._history[self._index] = path
 
+    def relocate_archive(self, source: Path, destination: Path) -> None:
+        """Keep archive history usable after moving the underlying ZIP."""
+        self._history = [
+            ArchiveLocation(destination, location.internal)
+            if isinstance(location, ArchiveLocation) and location.path == source
+            else location
+            for location in self._history
+        ]
+
     def forward(self) -> Path | ArchiveLocation | None:
         if self.can_forward:
             self._index += 1
