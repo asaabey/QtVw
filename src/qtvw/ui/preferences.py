@@ -74,6 +74,10 @@ class PreferencesDialog(QDialog):
             "Auto uses OpenGL for the image viewer and falls back to software."
         )
         form.addRow("Image rendering", self.rendering)
+        self.smooth_scaling = QCheckBox("Smooth image scaling")
+        self.smooth_scaling.setChecked(preferences.smooth_scaling)
+        self.smooth_scaling.setToolTip("Smooths resized images. Turn off for crisp pixel art.")
+        form.addRow(self.smooth_scaling)
         self.rendering_status = QLabel()
         self.rendering_status.setWordWrap(True)
         form.addRow(self.rendering_status)
@@ -137,6 +141,7 @@ class PreferencesDialog(QDialog):
             descending=self.descending.isChecked(),
             appearance=self.appearance.currentData(),
             rendering=self.rendering.currentData(),
+            smooth_scaling=self.smooth_scaling.isChecked(),
             cache_mb=self.cache_mb.value(),
             decoded_mp=self.decoded_mp.value(),
             input_mb=self.input_mb.value(),

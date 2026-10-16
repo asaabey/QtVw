@@ -305,6 +305,30 @@ These timings do not establish a user-visible speedup or an end-to-end browsing
 comparison. Keep both rendering modes available and measure on target Ubuntu
 hardware before making performance claims.
 
+### Follow-up: diagnostics, help, and smooth scaling
+
+Application startup now enables asynchronous JSON-line logging for navigation,
+renderer changes, Qt messages, and failures. A bounded queue feeds a single writer;
+minute segments retain about one hour and at most 8 MiB. Cleanup also runs every
+30 seconds while idle. Help shows the actual log folder, logging status, and a
+copy-path button. File failures leave browsing available.
+
+F1 and the toolbar Help button show shortcuts derived from live QAction bindings,
+their contexts, and mouse controls. Backspace now works in the image viewer as
+well as the browser. Smooth image scaling is enabled by default and saved in
+Preferences. Explicit pixmap transformation mode fixes the previous render hint
+being overridden by Qt's default fast pixmap mode. Disabling smoothing preserves
+source pixels and zoom state; image-editing filters remain outside this change.
+
+Validation: **76 passed, 1 skipped** with the offscreen platform; **1 passed** for
+the native Cocoa OpenGL check. New tests cover retention during idle time, noisy
+logging size limits, queue overflow, unwritable storage, Qt messages and exception
+hooks, actual shortcut bindings, viewer Backspace, interpolated output pixels,
+and saved smoothing preferences. Ruff lint and formatting pass.
+
+The user reported successful testing on Ubuntu 25.10 with Python 3.13. Architecture,
+driver details, and release performance acceptance remain unverified.
+
 ### Commands
 
 Milestone 1 configures the following commands. Create the virtual environment with Python 3.10 or newer (substitute your installed interpreter):

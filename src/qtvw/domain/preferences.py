@@ -14,6 +14,7 @@ class Preferences:
     descending: bool = False
     appearance: str = "system"
     rendering: str = "auto"
+    smooth_scaling: bool = True
     cache_mb: int = 512
     decoded_mp: int = 64
     input_mb: int = 256

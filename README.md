@@ -114,8 +114,27 @@ Use `Ctrl+O` to choose a folder; `Alt+Left`/`Alt+Right` for history; `Alt+Up` fo
 parent; Enter to open; and `F5` to refresh. In the viewer, Left/Right change images,
 `0` fits, `1` shows actual size, `+`/`-` zoom, and the mouse wheel zooms. Drag to pan.
 `F11` toggles fullscreen; Esc exits fullscreen, then returns to the grid.
+Backspace also returns to the grid from the viewer. Press **F1** or click **Help**
+for the full shortcut list, mouse controls, and the log folder location.
+
+## Diagnostic logging
+
+Logging starts automatically when launching `qtvw` or `python -m qtvw`. It records
+startup details, navigation, renderer changes, Qt messages, and errors in JSON-line
+files under Qt's per-user application data directory, in `logs/`. **Help** displays
+the actual path and provides **Copy log folder**.
+
+Files retain approximately the last hour, with an additional **8 MiB total cap**.
+Minute-sized time buckets are cleaned on startup, after writes, and every 30 seconds
+while idle. Logging runs on a background thread with a bounded queue; overload
+drops messages, and file failures do not interrupt browsing. Help reports logging
+failures or dropped messages. Logs include local file paths and error details.
 
 ## Image rendering
+
+**Preferences → Browsing → Smooth image scaling** enables interpolation when
+fitting or zooming images and defaults to on. Disable it for crisp pixel art.
+This affects display only; blur, denoise, and sharpening filters are not available.
 
 **Preferences → Browsing → Image rendering** offers **Auto** (the default) and
 **Software**. Auto probes for a usable OpenGL context, then uses an OpenGL viewport
@@ -170,6 +189,9 @@ to verify the presented image; native window capture must be supported.
 The offscreen command supports headless GUI checks. Interactive testing remains
 necessary for native desktop behavior, panning, fullscreen, and responsiveness.
 No coverage threshold is configured.
+
+A user reported successful testing on **Ubuntu 25.10 with Python 3.13**.
+Architecture, graphics driver, and release performance measurements remain unverified.
 
 ## Layout
 

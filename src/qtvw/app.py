@@ -1,6 +1,8 @@
 """Command-line entry point and application lifecycle."""
 
 import argparse
+import logging
+import platform
 import sys
 from pathlib import Path
 
@@ -33,6 +35,26 @@ def main(argv: list[str] | None = None) -> int:
     application = QApplication([sys.argv[0]])
     application.setApplicationName("QtVw")
     application.setOrganizationName("QtVw")
-    window = MainWindow(start_path=args.directory, software_rendering=args.software_rendering)
-    window.show()
-    return application.exec()
+    from PySide6 import __version__ as pyside_version
+
+    from qtvw.diagnostics import configure_logging
+
+    diagnostics = configure_logging()
+    logger = logging.getLogger("qtvw.app")
+    try:
+        logger.info(
+            "Started: Python=%s PySide6=%s platform=%s software_override=%s",
+            platform.python_version(),
+            pyside_version,
+            platform.platform(),
+            args.software_rendering,
+        )
+        window = MainWindow(start_path=args.directory, software_rendering=args.software_rendering)
+        window.show()
+        return application.exec()
+    except Exception:
+        logger.exception("Application failed")
+        raise
+    finally:
+        logger.info("Application stopped")
+        diagnostics.close()

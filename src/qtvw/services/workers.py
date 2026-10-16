@@ -1,5 +1,6 @@
 """Bounded worker pool. Only QImages cross threads; widgets stay on the GUI thread."""
 
+import logging
 from dataclasses import asdict
 from pathlib import Path
 from threading import Event, Lock
@@ -82,6 +83,13 @@ class WorkerService(QObject):
                 if self._jobs.get(key) is future:
                     self._jobs.pop(key, None)
                     self._interests.pop(key, None)
+            if not future.cancelled() and future.exception() is not None:
+                error = future.exception()
+                logging.getLogger(__name__).error(
+                    "Unexpected background failure: %s",
+                    key,
+                    exc_info=(type(error), error, error.__traceback__),
+                )
 
         future.add_done_callback(finished)
         return True
@@ -96,8 +104,8 @@ class WorkerService(QObject):
                 return ArchiveIndex.restore(path, expected, records, self.archive_limits)
             except SourceChanged:
                 raise
-            except (ValueError, TypeError, KeyError, IndexError):
-                pass  # Rebuild malformed or obsolete disposable cache data.
+            except (ValueError, TypeError, KeyError, IndexError) as error:
+                logging.getLogger(__name__).warning("Rebuilding archive index %s: %s", path, error)
         reader = self._archives.get(path, token)
         check_cancel(token)
         self.cache.index_put(path, reader.fingerprint, policy, reader.records(), epoch)
@@ -135,6 +143,7 @@ class WorkerService(QObject):
                     self.listing_finished.emit(generation, str(error))
             except Exception as error:
                 if not token.is_set():
+                    logging.getLogger(__name__).warning("Listing failed for %s: %s", path, error)
                     self.listing_finished.emit(generation, str(error))
 
         if not self._submit(("list", generation, str(path)), operation, priority=LISTING):
@@ -269,10 +278,15 @@ class WorkerService(QObject):
                 image = QImage()
                 error = str(failure)
                 if not token.is_set():
+                    logging.getLogger(__name__).info("Source changed: %s", entry.display_path)
                     self.source_changed.emit(generation, str(entry.path))
             except Exception as failure:
                 image = QImage()
                 error = str(failure)
+                if not token.is_set():
+                    logging.getLogger(__name__).warning(
+                        "Image read failed for %s: %s", entry.display_path, failure
+                    )
             with self._lock:
                 interested = self._interests.get(job_key, False)
             if interested and not token.is_set():

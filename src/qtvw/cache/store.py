@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import logging
 import os
 import sqlite3
 import tempfile
@@ -155,6 +156,7 @@ class CacheStore:
                 )
                 if attempt or not corrupt:
                     raise
+                logging.getLogger(__name__).warning("Rebuilding corrupt cache database: %s", path)
                 for suffix in ("", "-wal", "-shm"):
                     Path(str(path) + suffix).unlink(missing_ok=True)
 
@@ -162,7 +164,8 @@ class CacheStore:
         def run():
             try:
                 return operation(self._connect())
-            except (OSError, sqlite3.Error, ValueError):
+            except (OSError, sqlite3.Error, ValueError) as error:
+                logging.getLogger(__name__).warning("Cache fallback for %s: %s", self.root, error)
                 self._rollback()
                 return fallback
 
@@ -425,6 +428,7 @@ class CacheStore:
                         path.unlink(missing_ok=True)
             return self._cleanup(db)
         except (OSError, sqlite3.Error, ValueError) as error:
+            logging.getLogger(__name__).warning("Cache maintenance failed: %s", error)
             self._rollback()
             return {"ok": False, "message": str(error)}
 

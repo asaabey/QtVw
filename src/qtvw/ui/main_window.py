@@ -1,5 +1,6 @@
 """Filesystem and ZIP browsing with a shared image viewer."""
 
+import logging
 from pathlib import Path
 
 from PySide6.QtCore import QDir, QFileSystemWatcher, QSettings, Qt, QTimer
@@ -30,6 +31,7 @@ from qtvw.services import Navigation, WorkerService
 from qtvw.services.scheduler import NEARBY, OPEN_IMAGE, PRELOAD, VISIBLE, PriorityExecutor
 from qtvw.sources.archive import ArchiveLimits
 from qtvw.ui.browser import Browser, BrowserModel
+from qtvw.ui.help import HelpDialog
 from qtvw.ui.preferences import PreferencesDialog, apply_appearance
 from qtvw.ui.viewer import ImageViewer
 
@@ -42,6 +44,8 @@ class MainWindow(QMainWindow):
         self.preferences = Preferences.load(self.settings)
         self._force_software_rendering = software_rendering
         self._preferences_dialog = None
+        self._help_dialog = None
+        self._shortcut_actions = []
         self._cache_busy = False
         self._maintenance = None
         self._listing_active = False
@@ -89,7 +93,9 @@ class MainWindow(QMainWindow):
         self.browser.activated.connect(self._open_index)
         self.browser.visible_changed.connect(self._schedule_thumbnails)
         mode = "software" if software_rendering else self.preferences.rendering
-        self.viewer = ImageViewer(rendering_mode=mode)
+        self.viewer = ImageViewer(
+            rendering_mode=mode, smooth_scaling=self.preferences.smooth_scaling
+        )
         self.renderer_label = QLabel()
         self.statusBar().addPermanentWidget(self.renderer_label)
         self.viewer.backend_changed.connect(self._renderer_changed)
@@ -125,6 +131,8 @@ class MainWindow(QMainWindow):
         grid_action = self._action(toolbar, "Grid", "Backspace", self.show_grid)
         grid_action.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self.browser.addAction(grid_action)
+        self.viewer.addAction(grid_action)
+        grid_action.setProperty("help_context", "Image viewer")
         self.hidden_action = self._action(toolbar, "Hidden", None, self.refresh)
         self.hidden_action.setCheckable(True)
         self.hidden_action.setChecked(self.preferences.show_hidden)
@@ -139,6 +147,7 @@ class MainWindow(QMainWindow):
         self.sort_combo.currentIndexChanged.connect(self._sort_changed)
         self._action(toolbar, "Preferences", "Ctrl+,", self.show_preferences)
         self._action(toolbar, "Clear cache", None, self.clear_cache)
+        self._action(toolbar, "Help", "F1", self.show_help)
         self._sort_changed()
         controls = QToolBar("Image controls", self)
         self.addToolBar(Qt.ToolBarArea.BottomToolBarArea, controls)
@@ -152,10 +161,12 @@ class MainWindow(QMainWindow):
         self._action(controls, "Zoom out", "-", lambda: self.viewer.zoom(0.8))
         # Single-character image shortcuts must not intercept location-field editing.
         for action in controls.actions():
+            action.setProperty("help_context", "Image viewer")
             action.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
             self.viewer.addAction(action)
         self._action(controls, "Fullscreen", "F11", self.toggle_fullscreen)
-        self._action(controls, "Return", "Esc", self.escape)
+        escape_action = self._action(controls, "Return", "Esc", self.escape)
+        escape_action.setProperty("help_context", "Image viewer / fullscreen")
         self.slider = QSlider(Qt.Orientation.Horizontal)
         self.slider.setRange(64, 256)
         self.slider.setMaximumWidth(180)
@@ -189,6 +200,7 @@ class MainWindow(QMainWindow):
         action = QAction(title, self)
         if shortcut:
             action.setShortcut(QKeySequence(shortcut))
+            self._shortcut_actions.append(action)
         action.triggered.connect(callback)
         toolbar.addAction(action)
         return action
@@ -201,6 +213,7 @@ class MainWindow(QMainWindow):
             self.navigate(Path(path))
 
     def navigate(self, path):
+        logging.getLogger(__name__).info("Navigate: %s", path)
         self._restore_state = None
         if not isinstance(path, ArchiveLocation):
             path = Path(path).expanduser().absolute()
@@ -359,6 +372,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Nested ZIP archives are not supported")
 
     def open_image(self, entry):
+        logging.getLogger(__name__).info("Open image: %s", entry.display_path)
         self.workers.reprioritize(self.generation, {})
         self.requested.clear()
         self.image_workers.cancel()
@@ -481,6 +495,15 @@ class MainWindow(QMainWindow):
         dialog.open()
         return dialog
 
+    def show_help(self):
+        if self._help_dialog is not None:
+            self._help_dialog.close()
+            self._help_dialog.deleteLater()
+        self._help_dialog = HelpDialog(self._shortcut_actions, self)
+        apply_appearance(self._help_dialog, self.preferences.appearance)
+        self._help_dialog.show()
+        return self._help_dialog
+
     def _apply_preferences(self):
         self.preferences = self._preferences_dialog.values()
         self.preferences.save(self.settings)
@@ -497,6 +520,12 @@ class MainWindow(QMainWindow):
         apply_appearance(self, self.preferences.appearance)
         self.viewer.set_rendering_mode(
             "software" if self._force_software_rendering else self.preferences.rendering
+        )
+        self.viewer.set_smooth_scaling(self.preferences.smooth_scaling)
+        logging.getLogger(__name__).info(
+            "Preferences saved: rendering=%s smoothing=%s",
+            self.preferences.rendering,
+            self.preferences.smooth_scaling,
         )
         self._reload_changed_source()
         self._begin_maintenance(
@@ -547,6 +576,9 @@ class MainWindow(QMainWindow):
         self._maintenance = None
         if not result["ok"]:
             message = "Cache update failed: " + result.get("message", "storage unavailable")
+            logging.getLogger(__name__).warning("%s", message)
+        else:
+            logging.getLogger(__name__).info("%s", message)
         self.statusBar().showMessage(message)
         if self._preferences_dialog is not None:
             self._preferences_dialog.clear_button.setEnabled(True)

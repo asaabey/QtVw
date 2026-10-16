@@ -1,5 +1,7 @@
 """Transform-based image viewer; pixmaps are created only on the GUI thread."""
 
+import logging
+
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QGuiApplication, QOffscreenSurface, QOpenGLContext, QPainter, QPixmap
 from PySide6.QtWidgets import QGraphicsScene, QGraphicsView, QWidget
@@ -36,11 +38,12 @@ def create_opengl_viewport(surface_format, parent):
 class ImageViewer(QGraphicsView):
     backend_changed = Signal(str)
 
-    def __init__(self, parent=None, rendering_mode="auto"):
+    def __init__(self, parent=None, rendering_mode="auto", smooth_scaling=True):
         super().__init__(parent)
         self.setScene(QGraphicsScene(self))
         self.item = None
         self.fit_mode = True
+        self.smooth_scaling = smooth_scaling
         self.rendering_mode = None
         self.rendering_backend = "software"
         self.fallback_reason = ""
@@ -54,7 +57,7 @@ class ImageViewer(QGraphicsView):
         self._fallback_timer = QTimer(self)
         self._fallback_timer.setSingleShot(True)
         self._fallback_timer.timeout.connect(self._fallback_to_software)
-        self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        self.set_smooth_scaling(smooth_scaling)
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.setBackgroundBrush(Qt.GlobalColor.black)
@@ -118,6 +121,7 @@ class ImageViewer(QGraphicsView):
             self._switching_renderer = False
         self.viewport().update()
         self.backend_changed.emit(self.rendering_description)
+        logging.getLogger(__name__).info("Viewer renderer: %s", self.rendering_description)
 
     def _restore_center(self):
         # Scrollbar geometry can settle one event-loop turn after setViewport().
@@ -132,6 +136,7 @@ class ImageViewer(QGraphicsView):
 
     def _schedule_fallback(self, reason):
         if self.rendering_backend == "opengl":
+            logging.getLogger(__name__).warning("OpenGL fallback: %s", reason)
             self.fallback_reason = reason
             # Replacing a viewport inside its show/paint handler would delete it mid-call.
             self._fallback_timer.start(0)
@@ -148,8 +153,23 @@ class ImageViewer(QGraphicsView):
     def set_image(self, image):
         self.clear()
         self.item = self.scene().addPixmap(QPixmap.fromImage(image))
+        self.item.setTransformationMode(
+            Qt.TransformationMode.SmoothTransformation
+            if self.smooth_scaling
+            else Qt.TransformationMode.FastTransformation
+        )
         self.scene().setSceneRect(self.item.boundingRect())
         self.fit()
+
+    def set_smooth_scaling(self, enabled):
+        self.smooth_scaling = bool(enabled)
+        self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, self.smooth_scaling)
+        if self.item is not None:
+            self.item.setTransformationMode(
+                Qt.TransformationMode.SmoothTransformation
+                if self.smooth_scaling
+                else Qt.TransformationMode.FastTransformation
+            )
 
     def fit(self):
         self._pending_center = None

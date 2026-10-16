@@ -6,11 +6,13 @@ from PySide6.QtCore import QSettings
 
 @pytest.fixture(autouse=True)
 def isolated_preferences(monkeypatch, tmp_path):
+    from qtvw import diagnostics
     from qtvw.cache import store
     from qtvw.ui import main_window
 
     cache_root = tmp_path.parent / f".cache-{tmp_path.name}"
     monkeypatch.setattr(store, "default_cache_dir", lambda: cache_root)
+    monkeypatch.setattr(diagnostics, "default_log_dir", lambda: cache_root / "logs")
     monkeypatch.setattr(
         main_window,
         "QSettings",
