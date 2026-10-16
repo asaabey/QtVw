@@ -32,6 +32,9 @@ class HelpDialog(QDialog):
             "Fit": "Fit the image to the window",
             "100%": "Show the image at actual size",
             "Help": "Show keyboard shortcuts and help",
+            "Delete images": "Confirm deletion of selected images from the current ZIP",
+            "Select portrait": "Select portrait images in the current folder",
+            "Select landscape": "Select landscape images in the current folder",
         }
         for action in actions:
             keys = " / ".join(
@@ -53,6 +56,15 @@ class HelpDialog(QDialog):
             "<tr><th>Key</th><th>Action</th><th>Where</th></tr>" + table + "</table>"
             "<h3>Mouse controls</h3><p>Double-click to open an item. In the image viewer, "
             "use the mouse wheel to zoom and drag to pan.</p>"
+            "<h3>Select and delete ZIP images</h3><p>In the grid, Ctrl+click toggles "
+            "individual selections; Shift+click selects a range. Ctrl+A selects all images "
+            "in the current folder. Ctrl+Shift+P selects portrait images; Ctrl+Shift+L selects "
+            "landscape images. These replace the selection, respect EXIF rotation, and exclude "
+            "square images. Checking runs in the background; Esc cancels. "
+            "Press Delete or click Delete images to confirm permanent "
+            "removal from a writable ZIP. Folders and nested ZIPs are not deleted. "
+            "Rewriting needs temporary disk space; progress includes a Cancel button. "
+            "There is no Trash or undo.</p>"
             "<h3>Image smoothing</h3><p>Preferences → Browsing → Smooth image scaling "
             "controls interpolation when fitting or zooming. Turn it off for crisp pixel art. "
             "Blur, denoise, and sharpening filters are not implemented; "

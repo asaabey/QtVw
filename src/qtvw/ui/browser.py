@@ -2,7 +2,16 @@
 
 from collections import OrderedDict
 
-from PySide6.QtCore import QAbstractListModel, QModelIndex, QRect, QSize, Qt, Signal
+from PySide6.QtCore import (
+    QAbstractListModel,
+    QItemSelection,
+    QItemSelectionModel,
+    QModelIndex,
+    QRect,
+    QSize,
+    Qt,
+    Signal,
+)
 from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QListView, QStyle
 
@@ -139,7 +148,7 @@ class Browser(QListView):
         self.setMovement(QListView.Movement.Static)
         self.setUniformItemSizes(True)
         self.setWordWrap(False)
-        self.setSelectionMode(QListView.SelectionMode.SingleSelection)
+        self.setSelectionMode(QListView.SelectionMode.ExtendedSelection)
         self.verticalScrollBar().valueChanged.connect(self.visible_changed)
         self.set_thumbnail_size(144)
 
@@ -153,6 +162,29 @@ class Browser(QListView):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.visible_changed.emit()
+
+    def selectAll(self):
+        """Select image rows only; folders and nested archives are kept."""
+        self.select_images()
+
+    def select_images(self, identities=None):
+        """Replace selection, grouping adjacent matches for large image grids."""
+        if identities is not None:
+            identities = set(identities)
+        selection = QItemSelection()
+        start = None
+        for row, entry in enumerate(self.model().entries):
+            if entry.kind == "image" and (identities is None or entry.identity in identities):
+                if start is None:
+                    start = row
+            elif start is not None:
+                selection.select(self.model().index(start), self.model().index(row - 1))
+                start = None
+        if start is not None:
+            selection.select(
+                self.model().index(start), self.model().index(self.model().rowCount() - 1)
+            )
+        self.selectionModel().select(selection, QItemSelectionModel.SelectionFlag.ClearAndSelect)
 
     def keyPressEvent(self, event):
         if event.key() in {Qt.Key.Key_Return, Qt.Key.Key_Enter}:

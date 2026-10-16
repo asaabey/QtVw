@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMessageBox,
     QSlider,
     QSplitter,
     QStackedWidget,
@@ -28,8 +29,10 @@ from qtvw.domain.locations import (
 )
 from qtvw.domain.preferences import Preferences
 from qtvw.services import Navigation, WorkerService
+from qtvw.services.archive_edit import ArchiveEditService
 from qtvw.services.scheduler import NEARBY, OPEN_IMAGE, PRELOAD, VISIBLE, PriorityExecutor
 from qtvw.sources.archive import ArchiveLimits
+from qtvw.ui.archive_delete import ArchiveDeleteProgress
 from qtvw.ui.browser import Browser, BrowserModel
 from qtvw.ui.help import HelpDialog
 from qtvw.ui.preferences import PreferencesDialog, apply_appearance
@@ -50,6 +53,12 @@ class MainWindow(QMainWindow):
         self._maintenance = None
         self._listing_active = False
         self._descent_seen = None
+        self._archive_editing = False
+        self._delete_confirmation = None
+        self._delete_progress = None
+        self._close_after_edit = False
+        self._orientation_generation = 0
+        self._orientation_pending = None
         self._after_clear_reload = False
         self._resume_thumbnails = False
         self.navigation = Navigation()
@@ -61,13 +70,21 @@ class MainWindow(QMainWindow):
         self.cache = CacheStore(disk_payload_limit=cache_bytes, disk_limit=cache_bytes)
         self.scheduler = PriorityExecutor(max_workers=self.preferences.workers)
         limits = ArchiveLimits(max_entry_bytes=self.preferences.entry_mb * 1024 * 1024)
+        self.archive_editor = ArchiveEditService(self.cache, limits, self)
+        self.archive_editor.progress.connect(self._archive_delete_progress)
+        self.archive_editor.finished.connect(self._archive_delete_finished)
         self.workers = WorkerService(
             self, archive_limits=limits, cache=self.cache, scheduler=self.scheduler
         )
         self.image_workers = WorkerService(
             self, archive_limits=limits, cache=self.cache, scheduler=self.scheduler
         )
-        for service in (self.workers, self.image_workers):
+        self.selection_workers = WorkerService(
+            self, archive_limits=limits, cache=self.cache, scheduler=self.scheduler
+        )
+        self.selection_workers.orientation_selected.connect(self._orientation_selected)
+        self.selection_workers.orientation_progress.connect(self._orientation_progress)
+        for service in (self.workers, self.image_workers, self.selection_workers):
             service.max_pixels = self.preferences.decoded_mp * 1_000_000
             service.max_file_bytes = self.preferences.input_mb * 1024 * 1024
         self.workers.source_changed.connect(self._browser_source_changed)
@@ -168,6 +185,28 @@ class MainWindow(QMainWindow):
             action.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
             self.viewer.addAction(action)
         self._action(controls, "Fullscreen", "F11", self.toggle_fullscreen)
+        select_action = self._action(
+            controls, "Select all images", "Ctrl+A", self._select_all_images
+        )
+        portrait_action = self._action(
+            controls, "Select portrait", "Ctrl+Shift+P", lambda: self.select_orientation("portrait")
+        )
+        landscape_action = self._action(
+            controls,
+            "Select landscape",
+            "Ctrl+Shift+L",
+            lambda: self.select_orientation("landscape"),
+        )
+        self.delete_action = self._action(
+            controls, "Delete images", "Delete", self.delete_selected_images
+        )
+        for action in (select_action, portrait_action, landscape_action, self.delete_action):
+            action.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            action.setProperty("help_context", "Thumbnail grid")
+            self.browser.addAction(action)
+        self.delete_action.setProperty("help_context", "Thumbnail grid inside ZIPs")
+        self.delete_action.setEnabled(False)
+        self.browser.selectionModel().selectionChanged.connect(self._browser_selection_changed)
         escape_action = self._action(controls, "Return", "Esc", self.escape)
         escape_action.setProperty("help_context", "Image viewer / fullscreen")
         self.slider = QSlider(Qt.Orientation.Horizontal)
@@ -241,6 +280,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(str(error))
 
     def _load(self, path, descent_seen=None):
+        self._cancel_orientation_selection()
         self._descent_seen = descent_seen
         self._refresh_timer.stop()
         self.show_grid()
@@ -259,6 +299,7 @@ class MainWindow(QMainWindow):
             filters |= QDir.Filter.Hidden
         self.folders.setFilter(filters)
         self._listing_active = True
+        self._update_delete_action()
         self.workers.list_directory(path, self.generation, self.hidden_action.isChecked())
         folder = path.path.parent if isinstance(path, ArchiveLocation) else path
         self.tree.setCurrentIndex(self.folders.index(str(folder)))
@@ -309,6 +350,7 @@ class MainWindow(QMainWindow):
                     self._load(target, descent_seen=seen)
                     return
         self.model.sort()
+        self._update_delete_action()
         if self.stack.currentWidget() == self.browser or error:
             self.statusBar().showMessage(error or f"{self.model.rowCount()} items")
         if self._restore_state is not None:
@@ -394,7 +436,9 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Nested ZIP archives are not supported")
 
     def open_image(self, entry):
+        self._cancel_orientation_selection()
         logging.getLogger(__name__).info("Open image: %s", entry.display_path)
+        self.delete_action.setEnabled(False)
         self.workers.reprioritize(self.generation, {})
         self.requested.clear()
         self.image_workers.cancel()
@@ -452,7 +496,187 @@ class MainWindow(QMainWindow):
         self.previous_action.setEnabled(False)
         self.next_action.setEnabled(False)
         self.viewed = None
+        self._update_delete_action()
         self._schedule_thumbnails()
+
+    def _selected_archive_images(self):
+        current = self.navigation.current
+        if not isinstance(current, ArchiveLocation):
+            return []
+        return [
+            self.model.entries[index.row()]
+            for index in self.browser.selectionModel().selectedIndexes()
+            if self.model.entries[index.row()].kind == "image"
+            and self.model.entries[index.row()].member is not None
+            and self.model.entries[index.row()].path == current.path
+        ]
+
+    def _cancel_orientation_selection(self):
+        self._orientation_generation += 1
+        self._orientation_pending = None
+        self.selection_workers.cancel()
+
+    def _browser_selection_changed(self, *_args):
+        if self._orientation_pending is not None:
+            self._cancel_orientation_selection()
+        self._update_delete_action()
+
+    def _select_all_images(self):
+        self._cancel_orientation_selection()
+        self.browser.selectAll()
+
+    def select_orientation(self, orientation):
+        if (
+            self._archive_editing
+            or self._listing_active
+            or self.stack.currentWidget() != self.browser
+        ):
+            return
+        self._cancel_orientation_selection()
+        self.browser.clearSelection()
+        request = self._orientation_generation
+        self._orientation_pending = (request, orientation)
+        self.statusBar().showMessage(f"Finding {orientation} images… Esc cancels")
+        self._update_delete_action()
+        self.selection_workers.select_orientation(self.model.entries, request, orientation)
+
+    def _orientation_progress(self, request, completed, total):
+        if self._orientation_pending is not None and self._orientation_pending[0] == request:
+            orientation = self._orientation_pending[1]
+            self.statusBar().showMessage(
+                f"Finding {orientation} images… {completed}/{total} — Esc cancels"
+            )
+
+    def _orientation_selected(self, request, identities, skipped, error):
+        if self._orientation_pending is None or self._orientation_pending[0] != request:
+            return
+        orientation = self._orientation_pending[1]
+        self._orientation_pending = None
+        if self._closing or self.stack.currentWidget() != self.browser:
+            return
+        if error:
+            self.statusBar().showMessage("Selection failed: " + error)
+        else:
+            self.browser.select_images(identities)
+            message = f"Selected {len(identities)} {orientation} images"
+            if skipped:
+                message += f"; skipped {skipped} unreadable or oversized images"
+            self.statusBar().showMessage(message)
+        self._update_delete_action()
+
+    def _update_delete_action(self, *_args):
+        if not hasattr(self, "delete_action"):
+            return
+        enabled = (
+            not self._archive_editing
+            and self._orientation_pending is None
+            and not self._listing_active
+            and self.stack.currentWidget() == self.browser
+            and bool(self._selected_archive_images())
+        )
+        self.delete_action.setEnabled(enabled)
+
+    def delete_selected_images(self):
+        if (
+            self._archive_editing
+            or self._listing_active
+            or self._orientation_pending is not None
+            or self.stack.currentWidget() != self.browser
+        ):
+            return
+        if self._delete_confirmation is not None and self._delete_confirmation.isVisible():
+            self._delete_confirmation.raise_()
+            return
+        entries = self._selected_archive_images()
+        if not entries:
+            return
+        path = entries[0].path
+        count = len(entries)
+        image_count = f"{count} image" + ("s" if count != 1 else "")
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle("Delete images from ZIP?")
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setTextFormat(Qt.TextFormat.PlainText)
+        dialog.setText(f"Permanently delete {image_count} from {path.name}?")
+        names = "\n".join(entry.member for entry in entries[:10])
+        if count > 10:
+            names += f"\n… and {count - 10} more"
+        dialog.setInformativeText(
+            f"{path}\n\n{names}\n\nOnly selected image entries will be removed. "
+            "The ZIP will be rebuilt; this needs temporary disk space. "
+            "Deleted images do not go to the Trash."
+        )
+        delete_button = dialog.addButton(
+            f"Delete {image_count}", QMessageBox.ButtonRole.DestructiveRole
+        )
+        cancel_button = dialog.addButton(QMessageBox.StandardButton.Cancel)
+        dialog.setDefaultButton(cancel_button)
+        dialog.setEscapeButton(cancel_button)
+        self._delete_confirmation = dialog
+
+        def decided(button):
+            if button == delete_button and not self._closing:
+                self._start_archive_delete(path, entries)
+
+        dialog.buttonClicked.connect(decided)
+        dialog.open()
+        return dialog
+
+    def _start_archive_delete(self, path, entries):
+        if self._archive_editing:
+            return
+        self._cancel_orientation_selection()
+        self._archive_editing = True
+        self._refresh_timer.stop()
+        self.workers.cancel()
+        self.image_workers.cancel()
+        self.generation += 1
+        self.viewer_generation += 1
+        self.requested.clear()
+        self._thumbnail_timer.stop()
+        self._update_delete_action()
+        self._delete_progress = ArchiveDeleteProgress(self.archive_editor, self)
+        apply_appearance(self._delete_progress, self.preferences.appearance)
+        self._delete_progress.open()
+        self.archive_editor.start(path, entries)
+
+    def _archive_delete_progress(self, percent, label):
+        if self._delete_progress is not None:
+            self._delete_progress.update_progress(percent, label)
+
+    def _archive_delete_finished(self, result, error, cancelled):
+        self._archive_editing = False
+        if self._delete_progress is not None:
+            self._delete_progress.accept()
+            self._delete_progress.deleteLater()
+            self._delete_progress = None
+        if self._close_after_edit:
+            self.close()
+            return
+        if result is not None:
+            current = self.navigation.current
+            if isinstance(current, ArchiveLocation) and current.path == result.path:
+                while current.internal not in result.folders:
+                    current = current.parent
+                self.navigation.replace_current(current)
+            self._restore_state = None
+            self.refresh()
+            noun = "image" if result.removed == 1 else "images"
+            message = f"Deleted {result.removed} {noun} from {result.path.name}"
+        else:
+            message = "Deletion cancelled; the original ZIP was kept" if cancelled else error
+            self._reload_changed_source()
+        logging.getLogger(__name__).info("ZIP edit: %s", message)
+        self.statusBar().showMessage(message)
+        if error:
+            dialog = QMessageBox(self)
+            dialog.setWindowTitle("Could not delete images")
+            dialog.setIcon(QMessageBox.Icon.Warning)
+            dialog.setTextFormat(Qt.TextFormat.PlainText)
+            dialog.setText(error)
+            dialog.setInformativeText("No deletion was applied. Refresh the archive and try again.")
+            self._delete_error = dialog
+            dialog.open()
 
     def _watch_sources(self):
         current = self.navigation.current
@@ -470,7 +694,7 @@ class MainWindow(QMainWindow):
             self.watcher.addPaths(sorted(paths - existing))
 
     def _source_dirty(self, *_args):
-        if not self._closing:
+        if not self._closing and not self._archive_editing:
             self._refresh_timer.start()
 
     def _browser_source_changed(self, generation, _path):
@@ -482,6 +706,8 @@ class MainWindow(QMainWindow):
             self._source_dirty()
 
     def _reload_changed_source(self):
+        if self._archive_editing:
+            return
         selected = self.browser.currentIndex()
         identity = self.model.entries[selected.row()].identity if selected.isValid() else None
         viewed = self.viewed if self.stack.currentWidget() == self.viewer else None
@@ -615,13 +841,24 @@ class MainWindow(QMainWindow):
         self.showNormal() if self.isFullScreen() else self.showFullScreen()
 
     def escape(self):
+        if self._orientation_pending is not None:
+            self._cancel_orientation_selection()
+            self._update_delete_action()
+            self.statusBar().showMessage("Orientation selection cancelled")
+            return
         if self.isFullScreen():
             self.showNormal()
         else:
             self.show_grid()
 
     def closeEvent(self, event):
+        if self._archive_editing:
+            self._close_after_edit = True
+            self._delete_progress.reject()
+            event.ignore()
+            return
         self._closing = True
+        self._cancel_orientation_selection()
         self._refresh_timer.stop()
         self._thumbnail_timer.stop()
         self.settings.setValue("geometry", self.saveGeometry())
@@ -635,8 +872,10 @@ class MainWindow(QMainWindow):
         self.settings.setValue("last_path", str(folder))
         self.settings.setValue("hidden", self.hidden_action.isChecked())
         self.settings.sync()
+        self.archive_editor.shutdown()
         self.workers.shutdown()
         self.image_workers.shutdown()
+        self.selection_workers.shutdown()
         self.scheduler.shutdown()
         self.cache.close()
         super().closeEvent(event)

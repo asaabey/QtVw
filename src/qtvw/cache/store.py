@@ -451,6 +451,26 @@ class CacheStore:
     def clear(self):
         return self.clear_async().result()
 
+    def invalidate_source(self, path):
+        """Forget a rewritten ZIP and prevent older jobs from repopulating it."""
+        name = str(path.absolute())
+        with self._lock:
+            self._epoch += 1
+            self._known_sources.pop(name, None)
+            self.images.clear()
+            self.thumbnails.clear()
+
+        def invalidate(db):
+            keys = db.execute("SELECT key FROM thumbnails WHERE source=?", (name,)).fetchall()
+            db.execute("DELETE FROM thumbnails WHERE source=?", (name,))
+            db.execute("DELETE FROM archives WHERE source=?", (name,))
+            db.execute("DELETE FROM sources WHERE path=?", (name,))
+            db.commit()
+            for (key,) in keys:
+                self._thumbnail_path(key).unlink(missing_ok=True)
+
+        self._call(invalidate)
+
     def close(self):
         with self._lock:
             if self._closed:

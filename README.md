@@ -130,11 +130,46 @@ symlink entries are excluded. The existing 64-million-pixel decode limit applies
 to archived images too. Decoded-pixel, input-size, and decompressed-entry limits
 are configurable in Preferences; the remaining archive limits require code changes.
 
+## Selecting and deleting images inside ZIPs
+
+In the thumbnail grid, use **Ctrl+click** to toggle individual selections or
+**Shift+click** to select a range. **Ctrl+A** selects all images in the current
+folder, excluding subfolders and nested ZIPs.
+
+For selection by image shape, press **Ctrl+Shift+P** for portrait images or
+**Ctrl+Shift+L** for landscape images. The toolbar also offers **Select portrait**
+and **Select landscape**. Each command replaces the current selection and works
+in both local folders and ZIP folders, using source dimensions with EXIF rotation
+applied. Square images are excluded. Dimension checks run in the background;
+**Esc** cancels. Unreadable dimensions and images exceeding resource limits are
+skipped, with a count in the status bar. ZIP entries must be decompressed to inspect
+their headers; pixel decoding is not needed. Navigation, a new selection command,
+or a manual selection cancels an unfinished scan.
+
+Inside a ZIP, press **Delete** or click **Delete images**. Review the archive,
+image count, and filename preview, then confirm. Only the selected image entries
+are removed; local files and folders cannot be deleted through this action.
+Deletion is permanent: there is no Trash or undo.
+
+QtVw rebuilds the archive into a temporary file beside the original, verifies the
+retained entries, and atomically replaces the original. Progress and cancellation
+run while the app stays responsive. Cancellation or failure before replacement
+leaves the original untouched by QtVw. Detected external changes abort deletion.
+After success, the listing and cached thumbnails/indexes are refreshed. Removing
+the last image from an implicit ZIP folder may return you to its surviving parent.
+
+The archive and its containing folder must be writable. Rewriting needs disk space
+for the new ZIP and can take time: retained content is decompressed, recompressed,
+and verified. Comments, member timestamps, compression methods, and member
+attributes are retained. Encrypted archives, symbolic-link archive paths, unsupported
+compression, and retained entries exceeding the configured decompressed-entry
+limit cannot be edited. Explicit empty directory entries remain in the ZIP.
+
 ## Caching and background work
 
 The application stores PNG thumbnails and a SQLite metadata/index database under
 Qt's per-user `CacheLocation`, in a `v1/` subdirectory. The cache is disposable;
-source folders and archives are never modified. Thumbnail keys include source
+source folders and archives are never modified by caching. Thumbnail keys include source
 path, size, nanosecond modification time, archive member position/CRC/size where
 applicable, thumbnail size class, and generation policy versions.
 

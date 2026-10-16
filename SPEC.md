@@ -10,10 +10,12 @@ The initial release will support:
 - Displaying ZIP archives alongside ordinary image files.
 - Showing a representative thumbnail for each ZIP archive.
 - Browsing images and folders inside ZIP archives.
+- Selecting multiple images and confirming permanent deletion from writable ZIPs.
 - Viewing individual images with zoom, pan, and fullscreen controls.
 - Caching thumbnails and archive indexes to improve repeat browsing.
 
-Image editing, archive creation, archive modification, cloud storage, and nested archives are outside the initial scope.
+Image editing, archive creation, archive modification beyond deleting selected images,
+cloud storage, and nested archives are outside the initial scope.
 
 ## 2. Target platform and technology
 
@@ -123,6 +125,33 @@ Visible items will receive the highest thumbnail-generation priority, followed b
 
 Failed thumbnails will show a placeholder. One unreadable image must not interrupt the remaining work.
 
+### ZIP image deletion
+
+Ctrl+Shift+P and Ctrl+Shift+L replace the grid selection with portrait or landscape
+images in the current local or ZIP folder. Classify source dimensions after EXIF
+rotation; exclude squares, unreadable dimensions, and entries exceeding resource
+limits. Scan in the background, report progress/skipped counts, and support Escape
+cancellation. Navigation and manual selection must invalidate unfinished scans.
+
+The grid supports Ctrl+click and Shift+click selection, with Ctrl+A selecting
+images in the current folder only. Delete and the Delete images action require
+confirmation showing the archive, image count, and a filename preview. Local
+files, directories, and nested archives cannot be deleted through this action.
+
+Deletion rebuilds a writable, unencrypted regular ZIP in its containing directory,
+streaming retained members within the configured decompressed entry-size limit.
+The rewrite runs in the background with progress and cancellation. Retained
+payloads must pass CRC/size verification before atomic replacement. Cancellation
+or failure before replacement leaves the original untouched by the operation;
+detected external changes abort replacement. Archive/member comments, member
+timestamps, compression methods, and member attributes are preserved; retained
+content is recompressed.
+
+After deletion, invalidate source caches and refresh the listing. If the current
+implicit folder disappears with its last image, show its nearest surviving parent.
+Deletion is permanent, with no Trash or undo. Editing archives through symbolic
+links is unsupported. Rewriting requires additional disk space.
+
 ## 8. Image viewer
 
 Opening an image will show it in the main content area.
@@ -221,6 +250,9 @@ Errors affecting individual items should appear on those items or in the status 
 | `Alt+Left` / `Alt+Right` | Navigation back / forward |
 | `Alt+Up` | Parent location |
 | `Enter` | Open selected item |
+| `Ctrl+A` | Select all images in the current grid folder |
+| `Ctrl+Shift+P` / `Ctrl+Shift+L` | Select portrait / landscape images in the current grid folder |
+| `Delete` | Confirm deletion of selected images inside a ZIP |
 | `Left` / `Right` | Previous / next image in viewer |
 | `+` / `-` | Zoom in / out |
 | `0` | Fit to window |

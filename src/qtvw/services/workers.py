@@ -6,7 +6,7 @@ from pathlib import Path
 from threading import Event, Lock
 
 from PySide6.QtCore import QBuffer, QIODevice, QObject, QSize, Qt, Signal
-from PySide6.QtGui import QImage, QImageReader
+from PySide6.QtGui import QImage, QImageIOHandler, QImageReader
 
 from qtvw.cache import CacheStore, thumbnail_key
 from qtvw.domain import Entry
@@ -29,6 +29,8 @@ class WorkerService(QObject):
     listing_finished = Signal(int, str)
     decoded = Signal(int, str, QImage, str)
     source_changed = Signal(int, str)
+    orientation_selected = Signal(int, list, int, str)
+    orientation_progress = Signal(int, int, int)
 
     def __init__(
         self,
@@ -165,6 +167,77 @@ class WorkerService(QObject):
                 raise ValueError(reader.errorString())
         check_cancel(token)
         return image
+
+    def _orientation(self, entry, token):
+        """Read source dimensions and rotation metadata without decoding pixels."""
+        expected = fingerprint(entry.path)
+        buffer = None
+        archive = None
+        if entry.member is not None:
+            archive = self._archives.get(entry.path, token)
+            content = archive.read(entry, token)
+            buffer = QBuffer()
+            buffer.setData(content)
+            buffer.open(QIODevice.OpenModeFlag.ReadOnly)
+            reader = QImageReader(buffer)
+        else:
+            if expected[0] > self.max_file_bytes:
+                raise ValueError("Image file exceeds the input byte limit")
+            reader = QImageReader(str(entry.path))
+        try:
+            check_cancel(token)
+            dimensions = reader.size()
+            if not dimensions.isValid():
+                raise ValueError(reader.errorString())
+            if dimensions.width() * dimensions.height() > self.max_pixels:
+                raise ValueError("Image exceeds the decoded pixel limit")
+            if reader.transformation() & QImageIOHandler.Transformation.TransformationRotate90:
+                dimensions.transpose()
+            if fingerprint(entry.path) != expected:
+                raise SourceChanged("Source changed during selection; refresh and try again")
+            if archive is not None:
+                archive.verify()
+            if dimensions.height() > dimensions.width():
+                return "portrait"
+            if dimensions.width() > dimensions.height():
+                return "landscape"
+            return "square"
+        finally:
+            if buffer is not None:
+                buffer.close()
+
+    def select_orientation(self, entries, generation, orientation):
+        if orientation not in {"portrait", "landscape"}:
+            raise ValueError("Unknown image orientation")
+        entries = tuple(entry for entry in entries if entry.kind == "image")
+
+        def operation(token):
+            matches = []
+            skipped = 0
+            try:
+                for position, entry in enumerate(entries, 1):
+                    check_cancel(token)
+                    try:
+                        if self._orientation(entry, token) == orientation:
+                            matches.append(entry.identity)
+                    except (Cancelled, SourceChanged):
+                        raise
+                    except Exception as error:
+                        skipped += 1
+                        logging.getLogger(__name__).warning(
+                            "Orientation unavailable for %s: %s", entry.display_path, error
+                        )
+                    if position % 32 == 0 or position == len(entries):
+                        self.orientation_progress.emit(generation, position, len(entries))
+                check_cancel(token)
+                self.orientation_selected.emit(generation, matches, skipped, "")
+            except Cancelled:
+                return
+            except Exception as error:
+                self.orientation_selected.emit(generation, [], skipped, str(error))
+
+        if not self._submit(("orientation", generation), operation, priority=LISTING):
+            self.orientation_selected.emit(generation, [], 0, "Background work queue is full")
 
     def _member_image(self, entry, size, token):
         archive = self._archives.get(entry.path, token)

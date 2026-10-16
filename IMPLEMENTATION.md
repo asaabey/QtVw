@@ -352,6 +352,68 @@ dependency-free wheel install in a fresh venv verifies both CLI help entry point
 after removing the staging source. Native Ubuntu dependency installation, desktop
 launch integration, and separate architecture validation remain pending.
 
+### Follow-up: multi-select image deletion inside ZIPs
+
+The grid uses extended selection: Ctrl+click toggles individual items, Shift+click
+selects ranges, and Ctrl+A selects only image rows in the current folder. Delete
+and the toolbar Delete images action operate only on selected ZIP image entries,
+after a confirmation containing the archive, count, and filename preview. Local
+images, folders, and nested ZIP entries are excluded.
+
+`sources/archive_edit.py` streams retained members into a temporary sibling ZIP,
+then verifies their CRCs, sizes, order, and compression methods before atomic
+replacement. Comments, member timestamps/attributes, and file permission bits are
+preserved. Selection checks use directory position, filename, CRC, size, and the
+archive fingerprint; duplicate filenames remain distinct. The source inode,
+size, modification time, and change time are rechecked before replacement.
+A nonblocking advisory file lock prevents simultaneous cooperative ZIP editors.
+Retained entries obey the configured decompressed-entry limit. No entries are
+extracted to filesystem paths.
+
+`services/archive_edit.py` owns a dedicated background executor and cancellation
+token. A modal progress dialog keeps the event loop responsive; Cancel, Escape,
+and closing the app request cooperative cancellation. Closing waits asynchronously
+for completion before shutting down services. Successful replacement invalidates
+the source's persistent cache entries and advances the memory-cache epoch so old
+jobs cannot repopulate it. A missing implicit folder returns to its nearest
+surviving parent. Cache cleanup errors after replacement cannot turn a committed
+deletion into a reported failure.
+
+Validation on macOS ARM64: **115 passed, 1 skipped** offscreen, **2 passed** on native
+Cocoa for actual deletion and responsive cancellation, plus Ruff lint/formatting.
+New cases cover real Ctrl/Shift selection and keyboard actions, confirmation
+cancellation, duplicate names, Unicode, ZIP64, metadata/content preservation,
+empty archives, corrupted retained data, stale selections, permissions, size limits,
+symbolic links, write/verification/replacement failures, external modification,
+cache invalidation, close cancellation, last-image parent recovery, and rejection
+of a concurrent editor's file lock. Native Ubuntu ZIP editing remains unverified.
+Deletion has no Trash or undo; standalone
+release packaging and milestone 5 acceptance remain pending.
+
+### Follow-up: select portrait or landscape images
+
+Ctrl+Shift+P and Ctrl+Shift+L (also available as toolbar actions) replace the grid
+selection with portrait or landscape images in the current local/ZIP folder.
+Squares, folders, and nested ZIP entries are excluded. Help lists both bindings.
+
+A separate WorkerService shares the bounded scheduler and reads source dimensions
+plus Qt transformation metadata without decoding pixels. Rotations with a 90-degree
+component swap axes, matching the viewer for all eight EXIF orientations. ZIP
+members are decompressed within the existing entry-size limit. Invalid dimensions
+and oversized images are skipped and counted. A changed archive aborts selection.
+
+Progress appears in the status bar. Esc, navigation, opening an image, manual
+selection, Ctrl+A, or a new orientation request cancels obsolete work. Request
+generations reject late results, and Delete stays disabled during scanning. The
+matching identities are applied together when scanning completes.
+
+Validation: **133 passed, 1 skipped** offscreen, and **3 passed** on native Cocoa
+for both keyboard bindings/scopes and selecting then deleting only portrait images.
+The 18 added cases cover local/ZIP folders, exact replacement, squares, invalid
+headers, size limits, empty folders, all EXIF transforms, cancellation/superseding,
+late results, source changes, and the orientation-to-confirmed-delete workflow.
+Ruff lint and formatting pass. Native Ubuntu verification remains pending.
+
 ### Commands
 
 Milestone 1 configures the following commands. Create the virtual environment with Python 3.10 or newer (substitute your installed interpreter):
