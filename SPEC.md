@@ -188,6 +188,14 @@ Next and previous navigation will follow the browser’s current sort order and 
 
 Returning to the grid will restore the previous selection and scroll position.
 
+Mouse navigation divides the viewer viewport, including black
+margins, into an upper half and two lower quarters. Double-clicking the upper
+half with the left mouse button returns to the browser grid. A single left click
+in the lower-left quarter opens the previous image; the lower-right quarter opens
+the next image. Upper-half single clicks do nothing. Dividers are invisible during
+normal viewing. Dragging continues to pan without triggering navigation, and
+mouse-wheel zoom and existing keyboard controls remain available.
+
 Image rendering will offer Auto and Software modes. Auto uses an OpenGL viewport
 when available and falls back to software when initialization or context checks
 fail. The active backend will be visible, and switching renderers will preserve

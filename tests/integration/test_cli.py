@@ -4,6 +4,16 @@ import os
 import subprocess
 import sys
 
+from qtvw import __version__
+
+
+def test_module_version():
+    result = subprocess.run(
+        [sys.executable, "-m", "qtvw", "--version"], capture_output=True, text=True, timeout=10
+    )
+    assert result.returncode == 0
+    assert result.stdout.strip() == f"QtVw {__version__}"
+
 
 def test_module_help():
     result = subprocess.run(
@@ -46,6 +56,9 @@ def test_cli_opens_archive_location(monkeypatch, tmp_path):
 
         def setApplicationName(self, name):
             pass
+
+        def setApplicationVersion(self, version):
+            assert version == __version__
 
         def setOrganizationName(self, name):
             pass

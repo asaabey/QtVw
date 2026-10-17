@@ -125,6 +125,8 @@ class MainWindow(QMainWindow):
         self.renderer_label = QLabel()
         self.statusBar().addPermanentWidget(self.renderer_label)
         self.viewer.backend_changed.connect(self._renderer_changed)
+        self.viewer.navigate_requested.connect(self.step_image)
+        self.viewer.browse_requested.connect(self.show_grid)
         self._renderer_changed(self.viewer.rendering_description)
         self.stack = QStackedWidget()
         self.stack.addWidget(self.browser)

@@ -6,10 +6,13 @@ import platform
 import sys
 from pathlib import Path
 
+from qtvw import __version__
+
 
 def main(argv: list[str] | None = None) -> int:
     """Launch the browser, optionally opening a folder or ZIP archive."""
     parser = argparse.ArgumentParser(description="Browse local images with QtVw.")
+    parser.add_argument("--version", action="version", version=f"QtVw {__version__}")
     parser.add_argument("directory", nargs="?", type=Path, help="starting folder or ZIP archive")
     parser.add_argument(
         "--software-rendering",
@@ -34,6 +37,7 @@ def main(argv: list[str] | None = None) -> int:
 
     application = QApplication([sys.argv[0]])
     application.setApplicationName("QtVw")
+    application.setApplicationVersion(__version__)
     application.setOrganizationName("QtVw")
     from PySide6 import __version__ as pyside_version
 

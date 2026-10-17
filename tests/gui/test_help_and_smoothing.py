@@ -4,6 +4,7 @@ from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QImage, QKeySequence, QPainter
 from PySide6.QtWidgets import QApplication
 
+from qtvw import __version__
 from qtvw.ui.main_window import MainWindow
 from qtvw.ui.viewer import ImageViewer
 
@@ -28,6 +29,9 @@ def test_help_shortcuts_log_folder_and_viewer_backspace(qtbot, tmp_path, image_b
         "Next image",
         "Image viewer",
         "Smooth image scaling",
+        f"QtVw {__version__}",
+        "lower-left quarter",
+        "Double-click the upper half",
     ):
         assert expected in text
     help_dialog.copy_logs.click()

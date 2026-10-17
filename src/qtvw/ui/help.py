@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from qtvw import __version__
 from qtvw.diagnostics import log_location, logging_status
 
 
@@ -52,10 +53,15 @@ class HelpDialog(QDialog):
             "<tr>" + "".join(f"<td>{escape(value)}</td>" for value in row) + "</tr>" for row in rows
         )
         self.content.setHtml(
+            f"<h2>QtVw {escape(__version__)}</h2>"
             "<h2>Keyboard shortcuts</h2><table cellpadding='6'>"
             "<tr><th>Key</th><th>Action</th><th>Where</th></tr>" + table + "</table>"
             "<h3>Mouse controls</h3><p>Double-click to open an item. In the image viewer, "
-            "use the mouse wheel to zoom and drag to pan.</p>"
+            "use the mouse wheel to zoom and drag to pan. Left-click the lower-left quarter "
+            "for the previous image or the lower-right quarter for the next image. "
+            "Double-click the upper half to return to the thumbnail grid; single clicks "
+            "there do nothing. Zones include black margins and resize with the viewer. "
+            "Dragging never navigates. Dividing lines are invisible.</p>"
             "<h3>Move ZIP files</h3><p>Drag ZIP thumbnails onto a folder in the grid or "
             "sidebar. Ctrl+click selects multiple ZIPs. Hover over a collapsed sidebar "
             "folder to expand it. You can also drop ZIP files from a desktop file manager "

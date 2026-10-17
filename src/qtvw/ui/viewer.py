@@ -4,7 +4,7 @@ import logging
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QGuiApplication, QOffscreenSurface, QOpenGLContext, QPainter, QPixmap
-from PySide6.QtWidgets import QGraphicsScene, QGraphicsView, QWidget
+from PySide6.QtWidgets import QApplication, QGraphicsScene, QGraphicsView, QWidget
 
 
 def probe_opengl():
@@ -37,11 +37,15 @@ def create_opengl_viewport(surface_format, parent):
 
 class ImageViewer(QGraphicsView):
     backend_changed = Signal(str)
+    navigate_requested = Signal(int)
+    browse_requested = Signal()
 
     def __init__(self, parent=None, rendering_mode="auto", smooth_scaling=True):
         super().__init__(parent)
         self.setScene(QGraphicsScene(self))
         self.item = None
+        self._click_origin = None
+        self._click_dragged = False
         self.fit_mode = True
         self.smooth_scaling = smooth_scaling
         self.rendering_mode = None
@@ -195,6 +199,46 @@ class ImageViewer(QGraphicsView):
     def wheelEvent(self, event):
         self.zoom(1.25 if event.angleDelta().y() > 0 else 0.8)
         event.accept()
+
+    def mousePressEvent(self, event):
+        self._click_origin = None
+        self._click_dragged = False
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._click_origin = event.position().toPoint()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._click_origin is not None:
+            distance = (event.position().toPoint() - self._click_origin).manhattanLength()
+            if distance >= QApplication.startDragDistance():
+                self._click_dragged = True
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        origin = self._click_origin
+        position = event.position().toPoint()
+        clicked = (
+            event.button() == Qt.MouseButton.LeftButton
+            and origin is not None
+            and not self._click_dragged
+            and (position - origin).manhattanLength() < QApplication.startDragDistance()
+            and self.viewport().rect().contains(position)
+        )
+        self._click_origin = None
+        super().mouseReleaseEvent(event)
+        if clicked and origin.y() >= self.viewport().height() / 2:
+            self.navigate_requested.emit(-1 if origin.x() < self.viewport().width() / 2 else 1)
+
+    def mouseDoubleClickEvent(self, event):
+        self._click_origin = None
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and event.position().y() < self.viewport().height() / 2
+        ):
+            event.accept()
+            self.browse_requested.emit()
+            return
+        super().mouseDoubleClickEvent(event)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

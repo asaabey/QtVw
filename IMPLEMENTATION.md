@@ -447,6 +447,34 @@ Native Ubuntu pointer/file-manager interaction and cross-filesystem moves remain
 unverified here; the conditional cross-filesystem test runs when a suitable second
 filesystem is available. Existing milestone 5 platform/release checks remain pending.
 
+### Follow-up: mouse navigation in the image viewer and app versioning
+
+Implemented for version **0.2.0** (SPEC §8).
+
+- Divide viewport coordinates, including black margins, into an upper half and
+  lower-left/lower-right quarters; keep dividers invisible during normal viewing.
+- Use an upper-half left-button double-click to return to the grid through the
+  existing browser-state restoration path. Upper-half single clicks do nothing.
+- On a lower-half left-button release, navigate previous/next through the existing
+  collection navigation methods only when the gesture remained a click. Track
+  movement using Qt's drag threshold so panning never triggers navigation.
+- Preserve wheel zoom, keyboard controls, fullscreen operation, and current
+  collection ordering/boundary behavior. Describe the zones in Help.
+- Add GUI coverage for all zones, resize-dependent boundaries, margins, drag
+  suppression, grid-state restoration, and local/ZIP collection navigation.
+  Native OpenGL pointer interaction and manual Ubuntu checks remain pending.
+
+The package version now comes from `qtvw.__version__` through setuptools dynamic
+metadata. Help, Qt application metadata, and `qtvw --version` use the same value.
+Release tags have not been created.
+
+Validation on macOS: **164 passed, 2 skipped** with the offscreen platform; Ruff
+lint and formatting pass. Added coverage checks local/ZIP navigation, collection
+boundaries, black margins, resized zones, drag panning without navigation, grid
+selection/scroll restoration, Help text, and the version command. The existing
+native OpenGL and second-filesystem skips remain. A wheel build using a supported
+Python interpreter produces `qtvw-0.2.0-py3-none-any.whl` with the dynamic version.
+
 ### Commands
 
 Milestone 1 configures the following commands. Create the virtual environment with Python 3.10 or newer (substitute your installed interpreter):
