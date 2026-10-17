@@ -494,3 +494,18 @@ Use unit tests for sorting, location transitions, cache identities, invalidation
 Use `pytest-qt` for navigation, model updates, viewer state, and shortcuts. Headless runs may use `QT_QPA_PLATFORM=offscreen`; retain interactive Ubuntu checks for windowing, fullscreen, appearance, and responsiveness. Do not impose an arbitrary coverage percentage; require regression tests for correctness fixes and critical source/cache/scheduler behavior.
 
 Record milestone completion and actual commands as implementation lands. Update `AGENTS.md` when directories or tooling become established. Keep release evidence mapped to SPEC §14, including platform, architecture, collection size, cache state, measurements, and outstanding limitations.
+
+### Follow-up: delete folders from the sidebar
+
+Sidebar folder context menus now offer Delete folder with a full-path confirmation,
+Cancel as default, and a permanent recursive deletion warning. A dedicated worker
+performs deletion while a modal busy dialog keeps Qt responsive. Close waits for
+the operation to finish. Filesystem roots and symlink targets are rejected; a
+folder identity check rejects replacements since confirmation. Internal symlinks
+are removed without traversing their targets. Failures explain that partial
+contents may have been deleted. Viewing a removed subtree returns to its parent.
+
+Validation on macOS: **166 passed, 2 skipped** with the offscreen platform; Ruff
+lint and formatting pass. Added checks cover cancellation, nested contents,
+current-folder recovery, symlink preservation, roots, and replacement rejection.
+Manual Ubuntu context-menu validation remains pending.

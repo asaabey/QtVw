@@ -12,7 +12,9 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMenu,
     QMessageBox,
+    QProgressDialog,
     QSlider,
     QSplitter,
     QStackedWidget,
@@ -30,6 +32,7 @@ from qtvw.domain.preferences import Preferences
 from qtvw.services import Navigation, WorkerService
 from qtvw.services.archive_edit import ArchiveEditService
 from qtvw.services.file_moves import FileMoveService
+from qtvw.services.folder_delete import FolderDeleteService, folder_identity
 from qtvw.services.scheduler import NEARBY, OPEN_IMAGE, PRELOAD, VISIBLE, PriorityExecutor
 from qtvw.sources.archive import ArchiveLimits
 from qtvw.ui.archive_delete import ArchiveDeleteProgress
@@ -56,6 +59,10 @@ class MainWindow(QMainWindow):
         self._descent_seen = None
         self._archive_editing = False
         self._delete_confirmation = None
+        self._folder_deleting = False
+        self._close_after_folder_delete = False
+        self.folder_deleter = FolderDeleteService(self)
+        self.folder_deleter.finished.connect(self._folder_delete_finished)
         self._delete_progress = None
         self._close_after_edit = False
         self._orientation_generation = 0
@@ -132,6 +139,8 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.browser)
         self.stack.addWidget(self.viewer)
         self.tree = FolderTree()
+        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._folder_context_menu)
         self.tree.zip_files_dropped.connect(self.move_zip_files)
         self.folders = QFileSystemModel(self)
         self.folders.setFilter(QDir.Filter.AllDirs | QDir.Filter.NoDotAndDotDot)
@@ -395,7 +404,7 @@ class MainWindow(QMainWindow):
             self._thumbnail_timer.start(0)
 
     def _request_visible(self):
-        if self._file_moving or self._archive_editing:
+        if self._file_moving or self._archive_editing or self._folder_deleting:
             return
         if self._cache_busy:
             self._resume_thumbnails = True
@@ -543,6 +552,7 @@ class MainWindow(QMainWindow):
         if (
             self._archive_editing
             or self._file_moving
+            or self._folder_deleting
             or self._listing_active
             or self.stack.currentWidget() != self.browser
         ):
@@ -585,6 +595,7 @@ class MainWindow(QMainWindow):
         enabled = (
             not self._archive_editing
             and not self._file_moving
+            and not self._folder_deleting
             and self._orientation_pending is None
             and not self._listing_active
             and self.stack.currentWidget() == self.browser
@@ -596,6 +607,7 @@ class MainWindow(QMainWindow):
         if (
             self._archive_editing
             or self._file_moving
+            or self._folder_deleting
             or self._listing_active
             or self._orientation_pending is not None
             or self.stack.currentWidget() != self.browser
@@ -699,8 +711,107 @@ class MainWindow(QMainWindow):
             self._delete_error = dialog
             dialog.open()
 
+    def _folder_context_menu(self, position):
+        index = self.tree.indexAt(position)
+        if not index.isValid():
+            return
+        path = Path(self.folders.filePath(index))
+        menu = QMenu(self.tree)
+        action = menu.addAction("Delete folder…")
+        try:
+            folder_identity(path)
+            allowed = True
+        except (OSError, ValueError):
+            allowed = False
+        action.setEnabled(
+            allowed and not (self._archive_editing or self._file_moving or self._folder_deleting)
+        )
+        action.triggered.connect(lambda: self.delete_sidebar_folder(path))
+        self._folder_menu = menu
+        menu.popup(self.tree.viewport().mapToGlobal(position))
+
+    def delete_sidebar_folder(self, path):
+        if self._closing or self._archive_editing or self._file_moving or self._folder_deleting:
+            return
+        if self._delete_confirmation is not None and self._delete_confirmation.isVisible():
+            self._delete_confirmation.raise_()
+            return
+        try:
+            identity = folder_identity(path)
+        except (OSError, ValueError) as error:
+            self.statusBar().showMessage(str(error))
+            return
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle("Delete folder?")
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setTextFormat(Qt.TextFormat.PlainText)
+        dialog.setText(f"Permanently delete folder {path.name} and all its contents?")
+        dialog.setInformativeText(
+            f"{path}\n\nAll files and subfolders will be deleted. "
+            "This cannot be undone. Nothing is moved to the Trash."
+        )
+        delete = dialog.addButton("Delete folder", QMessageBox.ButtonRole.DestructiveRole)
+        cancel = dialog.addButton(QMessageBox.StandardButton.Cancel)
+        dialog.setDefaultButton(cancel)
+        dialog.setEscapeButton(cancel)
+        self._delete_confirmation = dialog
+
+        def decided(button):
+            if button != delete or self._closing:
+                return
+            self._folder_deleting = True
+            self._cancel_orientation_selection()
+            self.workers.cancel()
+            self.image_workers.cancel()
+            self.generation += 1
+            self.viewer_generation += 1
+            self._refresh_timer.stop()
+            self._thumbnail_timer.stop()
+            self._folder_progress = QProgressDialog("Deleting folder and contents…", "", 0, 0, self)
+            self._folder_progress.setCancelButton(None)
+            self._folder_progress.setWindowModality(Qt.WindowModality.ApplicationModal)
+            self._folder_progress.open()
+            self.folder_deleter.start(path, identity)
+
+        dialog.buttonClicked.connect(decided)
+        dialog.open()
+        return dialog
+
+    def _folder_delete_finished(self, path, error):
+        self._folder_deleting = False
+        self._folder_progress.close()
+        self._folder_progress.deleteLater()
+        current = self.navigation.current
+        local = current.path if isinstance(current, ArchiveLocation) else current
+        if local is not None and (local == path or path in local.parents):
+            destination = path.parent
+            while not destination.is_dir() and destination != destination.parent:
+                destination = destination.parent
+            self.navigation.replace_current(destination)
+        self._restore_state = None
+        self.refresh()
+        if error:
+            dialog = QMessageBox(self)
+            dialog.setWindowTitle("Could not delete folder")
+            dialog.setIcon(QMessageBox.Icon.Warning)
+            dialog.setTextFormat(Qt.TextFormat.PlainText)
+            dialog.setText(f"{path}\n\n{error}")
+            dialog.setInformativeText("Some contents may already have been deleted.")
+            self._delete_error = dialog
+            dialog.open()
+        else:
+            self.statusBar().showMessage(f"Deleted folder {path}")
+        if self._close_after_folder_delete:
+            self.close()
+
     def move_zip_files(self, paths, directory):
-        if self._closing or self._file_moving or self._archive_editing or not paths:
+        if (
+            self._closing
+            or self._file_moving
+            or self._archive_editing
+            or self._folder_deleting
+            or not paths
+        ):
             return
         self._file_moving = True
         self.browser.zip_drops_enabled = False
@@ -769,7 +880,9 @@ class MainWindow(QMainWindow):
             self.watcher.addPaths(sorted(paths - existing))
 
     def _source_dirty(self, *_args):
-        if not self._closing and not self._archive_editing and not self._file_moving:
+        if not (
+            self._closing or self._archive_editing or self._file_moving or self._folder_deleting
+        ):
             self._refresh_timer.start()
 
     def _browser_source_changed(self, generation, _path):
@@ -781,7 +894,7 @@ class MainWindow(QMainWindow):
             self._source_dirty()
 
     def _reload_changed_source(self):
-        if self._archive_editing or self._file_moving:
+        if self._archive_editing or self._file_moving or self._folder_deleting:
             return
         selected = self.browser.currentIndex()
         identity = self.model.entries[selected.row()].identity if selected.isValid() else None
@@ -927,6 +1040,10 @@ class MainWindow(QMainWindow):
             self.show_grid()
 
     def closeEvent(self, event):
+        if self._folder_deleting:
+            self._close_after_folder_delete = True
+            event.ignore()
+            return
         if self._file_moving:
             self._close_after_move = True
             self._move_progress.reject()
@@ -954,6 +1071,7 @@ class MainWindow(QMainWindow):
         self.settings.sync()
         self.archive_editor.shutdown()
         self.file_mover.shutdown()
+        self.folder_deleter.shutdown()
         self.workers.shutdown()
         self.image_workers.shutdown()
         self.selection_workers.shutdown()

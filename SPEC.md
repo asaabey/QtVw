@@ -64,6 +64,16 @@ Folder contents must load progressively. The application must not recursively sc
 
 Hidden files will be excluded by default, with an option to show them. Symbolic links must not cause recursive traversal loops.
 
+### Deleting sidebar folders
+
+Right-click a filesystem folder in the sidebar and choose Delete folder. Require
+confirmation displaying its full path and warning that the folder and all files
+and subfolders are permanently deleted without Trash or undo. Default to Cancel.
+Delete in the background, report failures (which may leave partial contents), and
+return to a surviving parent if the current location was removed. Reject filesystem
+roots and symbolic-link folder targets; links inside a deleted folder are removed
+without deleting their targets.
+
 ### Moving ZIP files
 
 Drag one or more local ZIP thumbnails onto a filesystem folder in the grid or
