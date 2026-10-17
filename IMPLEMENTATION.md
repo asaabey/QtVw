@@ -509,3 +509,33 @@ Validation on macOS: **166 passed, 2 skipped** with the offscreen platform; Ruff
 lint and formatting pass. Added checks cover cancellation, nested contents,
 current-folder recovery, symlink preservation, roots, and replacement rejection.
 Manual Ubuntu context-menu validation remains pending.
+
+### Follow-up: convert RAR files to ZIP
+
+Local RAR files appear in the grid with a Convert to ZIP context action and a
+conversion hint on activation. `services/rar_conversion.py` streams members into
+a temporary sibling ZIP with bounded buffers, preserving file data, folder names,
+and representable modification timestamps. The worker verifies member counts,
+sizes, source CRCs when present, and ZIP CRCs before atomic no-overwrite publication
+via a hard link. Source identity is checked before publication. The original RAR
+is retained; failures and cancellation remove temporary output. Progress/cancel
+uses a modal dialog, and closing waits asynchronously for cancellation.
+
+The new `rarfile` dependency handles RAR parsing and stored members. Compressed
+members require UnRAR on PATH; the error and README give Ubuntu installation
+instructions. macOS's bsdtar fallback failed compressed-fixture checks, so it is
+explicitly disabled. Password-protected and multi-volume archives, links, unsafe
+or duplicate paths, and oversized entries are rejected. Cancellation is cooperative
+between reads and may wait for an extractor read. Hard-link publication requires
+filesystem hard-link support and otherwise reports an error without publishing.
+Direct RAR browsing and cover thumbnails remain outside scope.
+
+Validation on macOS ARM64: **184 passed, 2 skipped** offscreen; Ruff lint and
+formatting pass. Generated RAR4 fixtures cover real conversion, nesting, contents,
+empty archives, corrupt payloads, cancellation, limits, symlinks, duplicate/unsafe
+names, source changes, destination conflicts including late conflicts, missing
+extractors, UI discovery/context action, error dialogs, and close cancellation.
+Additional temporary upstream rarfile fixtures verified RAR3/RAR5 directory trees,
+compressed and solid RAR3/RAR5 archives, and Unicode filenames using RARLAB UnRAR
+7.23. Downloaded tools and fixtures were not added to the repository. Manual Ubuntu
+conversion testing and existing milestone 5 release checks remain pending.

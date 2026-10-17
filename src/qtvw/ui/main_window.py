@@ -33,6 +33,7 @@ from qtvw.services import Navigation, WorkerService
 from qtvw.services.archive_edit import ArchiveEditService
 from qtvw.services.file_moves import FileMoveService
 from qtvw.services.folder_delete import FolderDeleteService, folder_identity
+from qtvw.services.rar_conversion import RarConversionService
 from qtvw.services.scheduler import NEARBY, OPEN_IMAGE, PRELOAD, VISIBLE, PriorityExecutor
 from qtvw.sources.archive import ArchiveLimits
 from qtvw.ui.archive_delete import ArchiveDeleteProgress
@@ -60,6 +61,11 @@ class MainWindow(QMainWindow):
         self._archive_editing = False
         self._delete_confirmation = None
         self._folder_deleting = False
+        self._rar_converting = False
+        self._close_after_conversion = False
+        self.rar_converter = RarConversionService(self)
+        self.rar_converter.progress.connect(self._conversion_progress)
+        self.rar_converter.finished.connect(self._conversion_finished)
         self._close_after_folder_delete = False
         self.folder_deleter = FolderDeleteService(self)
         self.folder_deleter.finished.connect(self._folder_delete_finished)
@@ -121,6 +127,8 @@ class MainWindow(QMainWindow):
         self._thumbnail_timer.timeout.connect(self._request_visible)
         self.model = BrowserModel(self)
         self.browser = Browser()
+        self.browser.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.browser.customContextMenuRequested.connect(self._browser_context_menu)
         self.browser.setModel(self.model)
         self.browser.activated.connect(self._open_index)
         self.browser.visible_changed.connect(self._schedule_thumbnails)
@@ -455,6 +463,8 @@ class MainWindow(QMainWindow):
             self.navigate(entry.location, auto_descend=True)
         elif entry.kind == "image":
             self.open_image(entry)
+        elif entry.kind == "rar":
+            self.statusBar().showMessage("Right-click this RAR and choose Convert to ZIP…")
         else:
             self.statusBar().showMessage("Nested ZIP archives are not supported")
 
@@ -553,6 +563,7 @@ class MainWindow(QMainWindow):
             self._archive_editing
             or self._file_moving
             or self._folder_deleting
+            or self._rar_converting
             or self._listing_active
             or self.stack.currentWidget() != self.browser
         ):
@@ -596,6 +607,7 @@ class MainWindow(QMainWindow):
             not self._archive_editing
             and not self._file_moving
             and not self._folder_deleting
+            and not self._rar_converting
             and self._orientation_pending is None
             and not self._listing_active
             and self.stack.currentWidget() == self.browser
@@ -608,6 +620,7 @@ class MainWindow(QMainWindow):
             self._archive_editing
             or self._file_moving
             or self._folder_deleting
+            or self._rar_converting
             or self._listing_active
             or self._orientation_pending is not None
             or self.stack.currentWidget() != self.browser
@@ -711,6 +724,70 @@ class MainWindow(QMainWindow):
             self._delete_error = dialog
             dialog.open()
 
+    def _browser_context_menu(self, position):
+        index = self.browser.indexAt(position)
+        if not index.isValid():
+            return
+        entry = self.model.entries[index.row()]
+        if entry.kind != "rar" or entry.member is not None:
+            return
+        menu = QMenu(self.browser)
+        action = menu.addAction("Convert to ZIP…")
+        action.triggered.connect(lambda: self.convert_rar_archive(entry.path))
+        self._browser_menu = menu
+        menu.popup(self.browser.viewport().mapToGlobal(position))
+
+    def convert_rar_archive(self, path):
+        if (
+            self._closing
+            or self._rar_converting
+            or self._folder_deleting
+            or self._file_moving
+            or self._archive_editing
+        ):
+            return
+        self._rar_converting = True
+        self.browser.zip_drops_enabled = False
+        self.tree.zip_drops_enabled = False
+        self._cancel_orientation_selection()
+        self._conversion_dialog = ArchiveDeleteProgress(self.rar_converter, self)
+        self._conversion_dialog.setWindowTitle("Convert RAR to ZIP")
+        self._conversion_dialog.label.setText(
+            f"Converting {path.name}…\nThe original RAR will be kept."
+        )
+        apply_appearance(self._conversion_dialog, self.preferences.appearance)
+        self._conversion_dialog.open()
+        self.rar_converter.start(path, self.preferences.entry_mb * 1024 * 1024)
+
+    def _conversion_progress(self, percent, label):
+        self._conversion_dialog.update_progress(percent, label)
+
+    def _conversion_finished(self, destination, error, cancelled):
+        self._rar_converting = False
+        self.browser.zip_drops_enabled = True
+        self.tree.zip_drops_enabled = True
+        self._conversion_dialog.accept()
+        self._conversion_dialog.deleteLater()
+        if self._close_after_conversion:
+            self.close()
+            return
+        self.refresh()
+        if error:
+            dialog = QMessageBox(self)
+            dialog.setWindowTitle("Could not convert RAR")
+            dialog.setIcon(QMessageBox.Icon.Warning)
+            dialog.setTextFormat(Qt.TextFormat.PlainText)
+            dialog.setText(error)
+            dialog.setInformativeText("The original RAR was kept. No ZIP was published.")
+            self._conversion_error = dialog
+            dialog.open()
+        else:
+            self.statusBar().showMessage(
+                "Conversion cancelled; the original RAR was kept"
+                if cancelled
+                else f"Created {destination}"
+            )
+
     def _folder_context_menu(self, position):
         index = self.tree.indexAt(position)
         if not index.isValid():
@@ -724,14 +801,26 @@ class MainWindow(QMainWindow):
         except (OSError, ValueError):
             allowed = False
         action.setEnabled(
-            allowed and not (self._archive_editing or self._file_moving or self._folder_deleting)
+            allowed
+            and not (
+                self._archive_editing
+                or self._file_moving
+                or self._folder_deleting
+                or self._rar_converting
+            )
         )
         action.triggered.connect(lambda: self.delete_sidebar_folder(path))
         self._folder_menu = menu
         menu.popup(self.tree.viewport().mapToGlobal(position))
 
     def delete_sidebar_folder(self, path):
-        if self._closing or self._archive_editing or self._file_moving or self._folder_deleting:
+        if (
+            self._closing
+            or self._archive_editing
+            or self._file_moving
+            or self._folder_deleting
+            or self._rar_converting
+        ):
             return
         if self._delete_confirmation is not None and self._delete_confirmation.isVisible():
             self._delete_confirmation.raise_()
@@ -810,6 +899,7 @@ class MainWindow(QMainWindow):
             or self._file_moving
             or self._archive_editing
             or self._folder_deleting
+            or self._rar_converting
             or not paths
         ):
             return
@@ -881,7 +971,11 @@ class MainWindow(QMainWindow):
 
     def _source_dirty(self, *_args):
         if not (
-            self._closing or self._archive_editing or self._file_moving or self._folder_deleting
+            self._closing
+            or self._archive_editing
+            or self._file_moving
+            or self._folder_deleting
+            or self._rar_converting
         ):
             self._refresh_timer.start()
 
@@ -894,7 +988,12 @@ class MainWindow(QMainWindow):
             self._source_dirty()
 
     def _reload_changed_source(self):
-        if self._archive_editing or self._file_moving or self._folder_deleting:
+        if (
+            self._archive_editing
+            or self._file_moving
+            or self._folder_deleting
+            or self._rar_converting
+        ):
             return
         selected = self.browser.currentIndex()
         identity = self.model.entries[selected.row()].identity if selected.isValid() else None
@@ -1040,6 +1139,11 @@ class MainWindow(QMainWindow):
             self.show_grid()
 
     def closeEvent(self, event):
+        if self._rar_converting:
+            self._close_after_conversion = True
+            self.rar_converter.cancel()
+            event.ignore()
+            return
         if self._folder_deleting:
             self._close_after_folder_delete = True
             event.ignore()
@@ -1072,6 +1176,7 @@ class MainWindow(QMainWindow):
         self.archive_editor.shutdown()
         self.file_mover.shutdown()
         self.folder_deleter.shutdown()
+        self.rar_converter.shutdown()
         self.workers.shutdown()
         self.image_workers.shutdown()
         self.selection_workers.shutdown()

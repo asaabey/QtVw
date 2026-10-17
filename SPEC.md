@@ -120,6 +120,19 @@ Password-protected, damaged, and unsupported archives will display an explanator
 
 ZIP files contained inside another ZIP will not be browsable in the initial release.
 
+### RAR conversion
+
+Show local RAR files in the grid with a Convert to ZIP context-menu action. Create
+a sibling ZIP preserving file contents and internal folders, keep the original,
+and refuse existing destination names, including conflicts during conversion.
+Stream data in bounded chunks outside the GUI thread and verify the finished ZIP
+before publishing it. Report progress and support cooperative cancellation and
+close waiting. Errors and cancellation remove temporary output. Compressed RARs
+require UnRAR; explain the installation step if it is unavailable. Reject
+password-protected/multi-volume archives, links, unsafe paths, duplicate names,
+and members above the configured decompressed entry-size limit. Direct RAR
+browsing remains outside scope.
+
 ## 6. Archive cover thumbnails
 
 Each ZIP archive will display a cover thumbnail in the main grid.

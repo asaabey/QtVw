@@ -14,6 +14,27 @@ startup behavior, cache controls, and resource limits. Ubuntu packaging and
 release performance validation remain milestone 5. A per-user Ubuntu installer
 is available below.
 
+## Convert RAR archives to ZIP
+
+RAR files appear in the thumbnail grid. Right-click one and choose **Convert to
+ZIP…** to create a ZIP beside it, keeping its files and internal folders. The
+original RAR is kept, and an existing ZIP is never overwritten. Conversion runs
+in the background with progress and Cancel; the completed ZIP is verified before
+it appears. Closing the app requests cancellation and waits for the worker.
+Cancellation can take time while the extractor finishes its current read.
+
+Compressed RARs require the `unrar` command on PATH. On Ubuntu:
+
+```sh
+sudo apt install unrar
+```
+
+For macOS development, place RARLAB's macOS `unrar` executable on PATH. The Python
+`rarfile` dependency is installed with QtVw. Password-protected and multi-volume
+RARs, archive links, and entries above the configured archive entry-size limit
+are rejected. Conversion needs space for the new ZIP; it does not extract files
+into the source folder. RAR covers and direct RAR browsing are not implemented.
+
 ## Install on Ubuntu
 
 Clone the repository and run the installer:

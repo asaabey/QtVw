@@ -19,6 +19,8 @@ def iter_directory(path: Path, show_hidden: bool = False) -> Iterator[Entry]:
                     kind = "image"
                 elif child.is_file() and Path(child.name).suffix.lower() == ".zip":
                     kind = "archive"
+                elif child.is_file() and Path(child.name).suffix.lower() == ".rar":
+                    kind = "rar"
                 else:
                     continue
                 stat = child.stat()

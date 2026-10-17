@@ -56,6 +56,8 @@ class BrowserModel(QAbstractListModel):
             return entry.name
         if role == Qt.ItemDataRole.ToolTipRole:
             reason = self.errors.get(entry.identity, "")
+            if entry.kind == "rar":
+                reason = "RAR archive — right-click to convert to ZIP"
             if entry.kind == "archive" and entry.member is not None:
                 reason = "Nested ZIP archives are not supported"
             return entry.display_path + (f"\n{reason}" if reason else "")
