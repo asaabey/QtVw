@@ -64,6 +64,24 @@ Folder contents must load progressively. The application must not recursively sc
 
 Hidden files will be excluded by default, with an option to show them. Symbolic links must not cause recursive traversal loops.
 
+### Creating sidebar folders
+
+Right-click a filesystem folder in the sidebar and choose New folder. Prompt for
+a single child folder name and display the parent path. Create in the background,
+expand the parent in the sidebar, and refresh its grid when currently viewed.
+Keep the current location. Reject blank names, path separators, `.` and `..`;
+report existing names and filesystem errors without replacing existing entries.
+
+### Renaming folders
+
+Select one filesystem folder in the sidebar or browser grid and press F2, or use
+its Rename folder context-menu action. Prompt with the current name selected.
+Rename in the background without overwriting existing entries. Reject invalid
+names, filesystem roots, symbolic-link targets, and folders replaced since the
+prompt opened. Update current local/ZIP locations and navigation history beneath
+the renamed folder, restore the current image/selection, and refresh the sidebar.
+Renaming folders inside ZIPs is unsupported.
+
 ### Deleting sidebar folders
 
 Right-click a filesystem folder in the sidebar and choose Delete folder. Require
@@ -307,6 +325,7 @@ Errors affecting individual items should appear on those items or in the status 
 | `F11` | Toggle fullscreen |
 | `Esc` | Exit fullscreen, then return to grid |
 | `F5` | Refresh current location |
+| `F2` | Rename one selected filesystem folder in sidebar or grid |
 
 ## 13. Preferences
 

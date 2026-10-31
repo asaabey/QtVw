@@ -34,6 +34,7 @@ class HelpDialog(QDialog):
             "100%": "Show the image at actual size",
             "Help": "Show keyboard shortcuts and help",
             "Delete images": "Confirm deletion of selected images from the current ZIP",
+            "Rename folder…": "Rename the selected filesystem folder",
             "Select portrait": "Select portrait images in the current folder",
             "Select landscape": "Select landscape images in the current folder",
         }

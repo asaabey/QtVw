@@ -5,6 +5,14 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 
+def relocate_path(path: Path, source: Path, destination: Path) -> Path:
+    """Map a renamed directory and its descendants to their new paths."""
+    try:
+        return destination / path.relative_to(source)
+    except ValueError:
+        return path
+
+
 def member_path(value: str) -> str:
     """Accept canonical, relative POSIX paths only."""
     if not value:

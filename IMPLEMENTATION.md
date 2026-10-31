@@ -539,3 +539,39 @@ Additional temporary upstream rarfile fixtures verified RAR3/RAR5 directory tree
 compressed and solid RAR3/RAR5 archives, and Unicode filenames using RARLAB UnRAR
 7.23. Downloaded tools and fixtures were not added to the repository. Manual Ubuntu
 conversion testing and existing milestone 5 release checks remain pending.
+
+### Follow-up: create child folders from the sidebar
+
+The sidebar context menu now includes New folder. A name prompt displays the
+clicked parent path. Creation uses the shared background scheduler, refuses
+existing entries and invalid child names, and reports filesystem errors. Success
+expands the parent and refreshes its grid without navigating away. Closing waits
+asynchronously for an in-progress creation to finish.
+
+Validation on Linux x86-64 with the offscreen platform: **190 passed, 1 skipped,
+1 failed**. The failure is the previously reproduced RAR conversion
+`changed` test, which also fails on unchanged code. Four new GUI tests cover the
+context-menu action, Unicode names, target parent, grid refresh, cancellation,
+invalid names, conflicts, permissions, and closing during background creation.
+Ruff lint and formatting pass. Native sidebar interaction remains unverified.
+
+### Follow-up: F2 folder renaming
+
+F2 and Rename folder context actions now prompt for a new name for one selected
+filesystem folder in the sidebar or grid. The existing name is preselected.
+Renames use the shared scheduler and QFile's no-overwrite operation. Invalid
+names, roots, symbolic links, changed source identities, and destination conflicts
+are rejected. Closing waits asynchronously for the operation to finish.
+
+Successful renames update local and ZIP navigation history below the renamed
+folder and reload the current view with its image, selection, and scroll position.
+Cancelled worker generations cannot publish obsolete thumbnails. Help includes
+the scoped F2 shortcut. Folder creation's expansion check now reacquires its
+filesystem model index after asynchronous sidebar sorting.
+
+Validation on Linux x86-64 with the offscreen platform: **211 passed, 1 skipped,
+1 failed**. The remaining failure is the known RAR conversion `changed` test.
+New tests exercise F2 in both views, context actions, Unicode names, cancellation,
+invalid selections/names, existing files/folders/links, replaced sources, roots,
+open ZIP images, local/ZIP history, and closing during a rename. Ruff lint and
+formatting pass. Native Ubuntu/macOS pointer interaction remains unverified.

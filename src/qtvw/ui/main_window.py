@@ -1,6 +1,7 @@
 """Filesystem and ZIP browsing with a shared image viewer."""
 
 import logging
+from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import QDir, QFileSystemWatcher, QLocale, QSettings, Qt, QTimer
@@ -9,6 +10,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QFileSystemModel,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMainWindow,
@@ -25,6 +27,7 @@ from qtvw.cache import CacheStore
 from qtvw.domain.locations import (
     ArchiveLocation,
     parse_location,
+    relocate_path,
     restore_location,
     save_location,
 )
@@ -33,9 +36,18 @@ from qtvw.services import Navigation, WorkerService
 from qtvw.services.archive_edit import ArchiveEditService
 from qtvw.services.file_moves import FileMoveService
 from qtvw.services.folder_delete import FolderDeleteService, folder_identity
+from qtvw.services.folder_rename import rename_folder
 from qtvw.services.rar_conversion import RarConversionService
-from qtvw.services.scheduler import NEARBY, OPEN_IMAGE, PRELOAD, VISIBLE, PriorityExecutor
+from qtvw.services.scheduler import (
+    NEARBY,
+    OPEN_IMAGE,
+    PRELOAD,
+    VISIBLE,
+    PriorityExecutor,
+    QueueFull,
+)
 from qtvw.sources.archive import ArchiveLimits
+from qtvw.sources.filesystem import create_child_folder
 from qtvw.ui.archive_delete import ArchiveDeleteProgress
 from qtvw.ui.browser import Browser, BrowserModel
 from qtvw.ui.file_moves import FileMoveProgress, FolderTree
@@ -61,6 +73,12 @@ class MainWindow(QMainWindow):
         self._archive_editing = False
         self._delete_confirmation = None
         self._folder_deleting = False
+        self._folder_creating = False
+        self._folder_renaming = False
+        self._folder_rename_dialog = None
+        self._close_after_folder_rename = False
+        self._folder_create_dialog = None
+        self._close_after_folder_create = False
         self._rar_converting = False
         self._close_after_conversion = False
         self.rar_converter = RarConversionService(self)
@@ -157,6 +175,16 @@ class MainWindow(QMainWindow):
         self.folders.setFilter(QDir.Filter.AllDirs | QDir.Filter.NoDotAndDotDot)
         self.folders.setRootPath(QDir.rootPath())
         self.tree.setModel(self.folders)
+        self.rename_folder_action = QAction("Rename folder…", self)
+        self.rename_folder_action.setShortcut(QKeySequence("F2"))
+        self.rename_folder_action.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self.rename_folder_action.setProperty(
+            "help_context", "Filesystem folders in sidebar or grid"
+        )
+        self.rename_folder_action.triggered.connect(self.rename_selected_folder)
+        self.tree.addAction(self.rename_folder_action)
+        self.browser.addAction(self.rename_folder_action)
+        self._shortcut_actions.append(self.rename_folder_action)
         for column in range(1, self.folders.columnCount()):
             self.tree.hideColumn(column)
         self.tree.setHeaderHidden(True)
@@ -416,7 +444,12 @@ class MainWindow(QMainWindow):
             self._thumbnail_timer.start(0)
 
     def _request_visible(self):
-        if self._file_moving or self._archive_editing or self._folder_deleting:
+        if (
+            self._file_moving
+            or self._archive_editing
+            or self._folder_deleting
+            or self._folder_renaming
+        ):
             return
         if self._cache_busy:
             self._resume_thumbnails = True
@@ -586,6 +619,8 @@ class MainWindow(QMainWindow):
             self._archive_editing
             or self._file_moving
             or self._folder_deleting
+            or self._folder_creating
+            or self._folder_renaming
             or self._rar_converting
             or self._listing_active
             or self.stack.currentWidget() != self.browser
@@ -630,6 +665,8 @@ class MainWindow(QMainWindow):
             not self._archive_editing
             and not self._file_moving
             and not self._folder_deleting
+            and not self._folder_creating
+            and not self._folder_renaming
             and not self._rar_converting
             and self._orientation_pending is None
             and not self._listing_active
@@ -643,6 +680,8 @@ class MainWindow(QMainWindow):
             self._archive_editing
             or self._file_moving
             or self._folder_deleting
+            or self._folder_creating
+            or self._folder_renaming
             or self._rar_converting
             or self._listing_active
             or self._orientation_pending is not None
@@ -752,6 +791,13 @@ class MainWindow(QMainWindow):
         if not index.isValid():
             return
         entry = self.model.entries[index.row()]
+        if entry.kind == "folder" and entry.member is None:
+            menu = QMenu(self.browser)
+            action = menu.addAction("Rename folder…")
+            action.triggered.connect(lambda: self.rename_local_folder(entry.path))
+            self._browser_menu = menu
+            menu.popup(self.browser.viewport().mapToGlobal(position))
+            return
         if entry.kind != "rar" or entry.member is not None:
             return
         menu = QMenu(self.browser)
@@ -765,6 +811,8 @@ class MainWindow(QMainWindow):
             self._closing
             or self._rar_converting
             or self._folder_deleting
+            or self._folder_creating
+            or self._folder_renaming
             or self._file_moving
             or self._archive_editing
         ):
@@ -817,24 +865,220 @@ class MainWindow(QMainWindow):
             return
         path = Path(self.folders.filePath(index))
         menu = QMenu(self.tree)
+        busy = (
+            self._closing
+            or self._archive_editing
+            or self._file_moving
+            or self._folder_deleting
+            or self._folder_creating
+            or self._folder_renaming
+            or self._rar_converting
+        )
+        create_action = menu.addAction("New folder…")
+        create_action.setEnabled(not busy)
+        create_action.triggered.connect(lambda: self.create_sidebar_folder(path))
+        rename_action = menu.addAction("Rename folder…")
         action = menu.addAction("Delete folder…")
         try:
             folder_identity(path)
             allowed = True
         except (OSError, ValueError):
             allowed = False
-        action.setEnabled(
-            allowed
-            and not (
-                self._archive_editing
-                or self._file_moving
-                or self._folder_deleting
-                or self._rar_converting
-            )
-        )
+        action.setEnabled(allowed and not busy)
+        rename_action.setEnabled(allowed and not busy)
+        rename_action.triggered.connect(lambda: self.rename_local_folder(path))
         action.triggered.connect(lambda: self.delete_sidebar_folder(path))
         self._folder_menu = menu
         menu.popup(self.tree.viewport().mapToGlobal(position))
+
+    def rename_selected_folder(self):
+        if self.tree.hasFocus():
+            index = self.tree.currentIndex()
+            if index.isValid():
+                return self.rename_local_folder(Path(self.folders.filePath(index)))
+        else:
+            indexes = self.browser.selectedIndexes()
+            if len(indexes) == 1:
+                entry = self.model.entries[indexes[0].row()]
+                if entry.kind == "folder" and entry.member is None:
+                    return self.rename_local_folder(entry.path)
+        self.statusBar().showMessage("Select one filesystem folder to rename")
+
+    def rename_local_folder(self, path):
+        if (
+            self._closing
+            or self._archive_editing
+            or self._file_moving
+            or self._folder_deleting
+            or self._folder_creating
+            or self._folder_renaming
+            or self._rar_converting
+        ):
+            return
+        if self._folder_rename_dialog is not None and self._folder_rename_dialog.isVisible():
+            self._folder_rename_dialog.raise_()
+            return self._folder_rename_dialog
+        try:
+            identity = folder_identity(path)
+        except (OSError, ValueError) as error:
+            self.statusBar().showMessage(str(error))
+            return
+        dialog = QInputDialog(self)
+        dialog.setWindowTitle("Rename folder")
+        dialog.setLabelText(f"Rename folder:\n{path}\n\nNew name:")
+        dialog.findChild(QLabel).setTextFormat(Qt.TextFormat.PlainText)
+        dialog.setTextValue(path.name)
+        dialog.setOkButtonText("Rename")
+        dialog.textValueSelected.connect(
+            lambda name: self._start_folder_rename(path, name, identity)
+        )
+        self._folder_rename_dialog = dialog
+        dialog.open()
+        return dialog
+
+    def _start_folder_rename(self, source, name, identity):
+        if self._closing or self._folder_renaming or name == source.name:
+            return
+        try:
+            self._folder_rename_future = self.scheduler.submit(
+                rename_folder, source, name, identity, priority=OPEN_IMAGE
+            )
+        except QueueFull as error:
+            self.statusBar().showMessage(str(error) + "; try renaming the folder again")
+            return
+        self._folder_renaming = True
+        self._cancel_orientation_selection()
+        self.workers.cancel()
+        self.image_workers.cancel()
+        self.generation += 1
+        self.viewer_generation += 1
+        self.requested.clear()
+        self._refresh_timer.stop()
+        self._thumbnail_timer.stop()
+        self.browser.zip_drops_enabled = False
+        self.tree.zip_drops_enabled = False
+        self._folder_rename_progress = QProgressDialog("Renaming folder…", "", 0, 0, self)
+        self._folder_rename_progress.setCancelButton(None)
+        self._folder_rename_progress.setWindowModality(Qt.WindowModality.ApplicationModal)
+        self._folder_rename_progress.open()
+        self._update_delete_action()
+        self._poll_folder_rename(source)
+
+    def _poll_folder_rename(self, source):
+        if not self._folder_rename_future.done():
+            QTimer.singleShot(25, lambda: self._poll_folder_rename(source))
+            return
+        self._folder_renaming = False
+        self.browser.zip_drops_enabled = True
+        self.tree.zip_drops_enabled = True
+        self._folder_rename_progress.close()
+        self._folder_rename_progress.deleteLater()
+        try:
+            destination = self._folder_rename_future.result()
+        except Exception as error:
+            self._reload_changed_source()
+            dialog = QMessageBox(self)
+            dialog.setWindowTitle("Could not rename folder")
+            dialog.setIcon(QMessageBox.Icon.Warning)
+            dialog.setTextFormat(Qt.TextFormat.PlainText)
+            dialog.setText(str(error))
+            self._folder_rename_error = dialog
+            if not self._close_after_folder_rename:
+                dialog.open()
+        else:
+            self.navigation.relocate_folder(source, destination)
+            viewed = (
+                replace(self.viewed, path=relocate_path(self.viewed.path, source, destination))
+                if self.viewed is not None
+                else None
+            )
+            selected = self.browser.currentIndex()
+            identity = None
+            if selected.isValid():
+                entry = self.model.entries[selected.row()]
+                identity = replace(
+                    entry, path=relocate_path(entry.path, source, destination)
+                ).identity
+            self._restore_state = (viewed, identity, self.browser.verticalScrollBar().value())
+            if not self._close_after_folder_rename:
+                self._load(self.navigation.current)
+                index = self.folders.index(str(destination))
+                self.tree.setCurrentIndex(index)
+                self.tree.scrollTo(index)
+                self.statusBar().showMessage(f"Renamed folder to {destination}")
+        self._update_delete_action()
+        if self._close_after_folder_rename:
+            self.close()
+
+    def create_sidebar_folder(self, parent):
+        if (
+            self._closing
+            or self._archive_editing
+            or self._file_moving
+            or self._folder_deleting
+            or self._folder_creating
+            or self._folder_renaming
+            or self._rar_converting
+        ):
+            return
+        if self._folder_create_dialog is not None and self._folder_create_dialog.isVisible():
+            self._folder_create_dialog.raise_()
+            return self._folder_create_dialog
+        dialog = QInputDialog(self)
+        dialog.setWindowTitle("New folder")
+        dialog.setLabelText(f"Create a child folder in:\n{parent}\n\nFolder name:")
+        dialog.findChild(QLabel).setTextFormat(Qt.TextFormat.PlainText)
+        dialog.setOkButtonText("Create")
+        dialog.textValueSelected.connect(lambda name: self._start_folder_create(parent, name))
+        self._folder_create_dialog = dialog
+        dialog.open()
+        return dialog
+
+    def _start_folder_create(self, parent, name):
+        if self._closing or self._folder_creating or self._folder_renaming:
+            return
+        try:
+            self._folder_create_future = self.scheduler.submit(
+                create_child_folder, parent, name, priority=OPEN_IMAGE
+            )
+        except QueueFull as error:
+            self.statusBar().showMessage(str(error) + "; try creating the folder again")
+            return
+        self._folder_creating = True
+        self._refresh_timer.stop()
+        self._folder_create_progress = QProgressDialog("Creating folder…", "", 0, 0, self)
+        self._folder_create_progress.setCancelButton(None)
+        self._folder_create_progress.setWindowModality(Qt.WindowModality.ApplicationModal)
+        self._folder_create_progress.open()
+        self._update_delete_action()
+        self._poll_folder_create()
+
+    def _poll_folder_create(self):
+        if not self._folder_create_future.done():
+            QTimer.singleShot(25, self._poll_folder_create)
+            return
+        self._folder_creating = False
+        self._folder_create_progress.close()
+        self._folder_create_progress.deleteLater()
+        try:
+            child = self._folder_create_future.result()
+        except Exception as error:
+            dialog = QMessageBox(self)
+            dialog.setWindowTitle("Could not create folder")
+            dialog.setIcon(QMessageBox.Icon.Warning)
+            dialog.setTextFormat(Qt.TextFormat.PlainText)
+            dialog.setText(str(error))
+            self._folder_create_error = dialog
+            if not self._close_after_folder_create:
+                dialog.open()
+        else:
+            self.tree.expand(self.folders.index(str(child.parent)))
+            if self.navigation.current == child.parent:
+                self._reload_changed_source()
+            self.statusBar().showMessage(f"Created folder {child}")
+        self._update_delete_action()
+        if self._close_after_folder_create:
+            self.close()
 
     def delete_sidebar_folder(self, path):
         if (
@@ -842,6 +1086,8 @@ class MainWindow(QMainWindow):
             or self._archive_editing
             or self._file_moving
             or self._folder_deleting
+            or self._folder_creating
+            or self._folder_renaming
             or self._rar_converting
         ):
             return
@@ -922,6 +1168,8 @@ class MainWindow(QMainWindow):
             or self._file_moving
             or self._archive_editing
             or self._folder_deleting
+            or self._folder_creating
+            or self._folder_renaming
             or self._rar_converting
             or not paths
         ):
@@ -998,6 +1246,8 @@ class MainWindow(QMainWindow):
             or self._archive_editing
             or self._file_moving
             or self._folder_deleting
+            or self._folder_creating
+            or self._folder_renaming
             or self._rar_converting
         ):
             self._refresh_timer.start()
@@ -1015,6 +1265,8 @@ class MainWindow(QMainWindow):
             self._archive_editing
             or self._file_moving
             or self._folder_deleting
+            or self._folder_creating
+            or self._folder_renaming
             or self._rar_converting
         ):
             return
@@ -1162,6 +1414,14 @@ class MainWindow(QMainWindow):
             self.show_grid()
 
     def closeEvent(self, event):
+        if self._folder_renaming:
+            self._close_after_folder_rename = True
+            event.ignore()
+            return
+        if self._folder_creating:
+            self._close_after_folder_create = True
+            event.ignore()
+            return
         if self._rar_converting:
             self._close_after_conversion = True
             self.rar_converter.cancel()

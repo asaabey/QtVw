@@ -1,4 +1,5 @@
 from qtvw.domain import natural_key
+from qtvw.domain.locations import ArchiveLocation
 from qtvw.services import Navigation
 from qtvw.sources.filesystem import iter_directory
 
@@ -37,3 +38,22 @@ def test_navigation_history_branch_and_parent(tmp_path):
     assert not nav.can_forward
     assert nav.up() == tmp_path
     assert nav.back() == tmp_path / "c"
+
+
+def test_rename_relocates_local_and_zip_history_without_matching_sibling_prefixes(tmp_path):
+    source = tmp_path / "album"
+    destination = tmp_path / "renamed"
+    sibling = tmp_path / "album-other"
+    nav = Navigation()
+    nav.navigate(source)
+    nav.navigate(source / "nested")
+    nav.navigate(ArchiveLocation(source / "photos.zip", "internal"))
+    nav.navigate(sibling)
+    nav.back()
+    nav.relocate_folder(source, destination)
+    assert nav.current == ArchiveLocation(destination / "photos.zip", "internal")
+    assert nav.forward() == sibling
+    nav.back()
+    assert nav.back() == destination / "nested"
+    assert nav.back() == destination
+    assert nav.up() == tmp_path

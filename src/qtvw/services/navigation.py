@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from qtvw.domain.locations import ArchiveLocation
+from qtvw.domain.locations import ArchiveLocation, relocate_path
 
 
 class Navigation:
@@ -46,6 +46,15 @@ class Navigation:
             ArchiveLocation(destination, location.internal)
             if isinstance(location, ArchiveLocation) and location.path == source
             else location
+            for location in self._history
+        ]
+
+    def relocate_folder(self, source: Path, destination: Path) -> None:
+        """Keep local and ZIP history usable after renaming a directory."""
+        self._history = [
+            ArchiveLocation(relocate_path(location.path, source, destination), location.internal)
+            if isinstance(location, ArchiveLocation)
+            else relocate_path(location, source, destination)
             for location in self._history
         ]
 
