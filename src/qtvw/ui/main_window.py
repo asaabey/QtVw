@@ -3,7 +3,7 @@
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import QDir, QFileSystemWatcher, QSettings, Qt, QTimer
+from PySide6.QtCore import QDir, QFileSystemWatcher, QLocale, QSettings, Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QComboBox,
@@ -137,6 +137,9 @@ class MainWindow(QMainWindow):
         self.viewer = ImageViewer(
             rendering_mode=mode, smooth_scaling=self.preferences.smooth_scaling
         )
+        self.selection_label = QLabel()
+        self.selection_label.hide()
+        self.statusBar().addPermanentWidget(self.selection_label)
         self.renderer_label = QLabel()
         self.statusBar().addPermanentWidget(self.renderer_label)
         self.viewer.backend_changed.connect(self._renderer_changed)
@@ -235,6 +238,7 @@ class MainWindow(QMainWindow):
         self.delete_action.setProperty("help_context", "Thumbnail grid inside ZIPs")
         self.delete_action.setEnabled(False)
         self.browser.selectionModel().selectionChanged.connect(self._browser_selection_changed)
+        self.model.modelReset.connect(self._update_selection_info)
         escape_action = self._action(controls, "Return", "Esc", self.escape)
         escape_action.setProperty("help_context", "Image viewer / fullscreen")
         self.slider = QSlider(Qt.Orientation.Horizontal)
@@ -478,6 +482,7 @@ class MainWindow(QMainWindow):
         self.viewer_generation += 1
         self.viewed = entry
         self.stack.setCurrentWidget(self.viewer)
+        self._update_selection_info()
         self.viewer.setFocus()
         self.previous_action.setEnabled(True)
         self.next_action.setEnabled(True)
@@ -525,6 +530,7 @@ class MainWindow(QMainWindow):
         self.viewer_generation += 1
         self.viewer.clear()
         self.stack.setCurrentWidget(self.browser)
+        self._update_selection_info()
         self.browser.setFocus()
         self.previous_action.setEnabled(False)
         self.next_action.setEnabled(False)
@@ -552,7 +558,24 @@ class MainWindow(QMainWindow):
     def _browser_selection_changed(self, *_args):
         if self._orientation_pending is not None:
             self._cancel_orientation_selection()
+        self._update_selection_info()
         self._update_delete_action()
+
+    def _update_selection_info(self):
+        files = [
+            self.model.entries[index.row()]
+            for index in self.browser.selectedIndexes()
+            if self.model.entries[index.row()].kind != "folder"
+        ]
+        self.selection_label.setVisible(bool(files) and self.stack.currentWidget() == self.browser)
+        if not files:
+            self.selection_label.clear()
+            self.selection_label.setToolTip("")
+            return
+        size = sum(entry.size for entry in files)
+        prefix = "Size" if len(files) == 1 else f"{len(files)} files"
+        self.selection_label.setText(f"{prefix}: {QLocale().formattedDataSize(size)}")
+        self.selection_label.setToolTip(f"{size:,} bytes")
 
     def _select_all_images(self):
         self._cancel_orientation_selection()

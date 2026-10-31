@@ -6,6 +6,7 @@ from PySide6.QtCore import (
     QAbstractListModel,
     QItemSelection,
     QItemSelectionModel,
+    QLocale,
     QMimeData,
     QModelIndex,
     QRect,
@@ -60,7 +61,13 @@ class BrowserModel(QAbstractListModel):
                 reason = "RAR archive — right-click to convert to ZIP"
             if entry.kind == "archive" and entry.member is not None:
                 reason = "Nested ZIP archives are not supported"
-            return entry.display_path + (f"\n{reason}" if reason else "")
+            details = [entry.display_path]
+            if entry.kind != "folder":
+                size = QLocale().formattedDataSize(entry.size)
+                details.append(f"Size: {size} ({entry.size:,} bytes)")
+            if reason:
+                details.append(reason)
+            return "\n".join(details)
         if role == Qt.ItemDataRole.DecorationRole:
             if entry.identity in self.pixmaps:
                 self.pixmaps.move_to_end(entry.identity)

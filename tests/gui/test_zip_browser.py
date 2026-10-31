@@ -2,7 +2,7 @@
 
 import zipfile
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QItemSelectionModel, QLocale, Qt
 from PySide6.QtGui import QColor
 
 from qtvw.domain.locations import ArchiveLocation
@@ -13,6 +13,77 @@ def wait_listing(qtbot, window, action):
     with qtbot.waitSignal(window.workers.listing_finished) as result:
         action()
     assert not result.args[1]
+
+
+def test_selected_zip_sizes_remain_visible_during_status_messages(qtbot, tmp_path):
+    archive = tmp_path / "photos.zip"
+    with zipfile.ZipFile(archive, "w") as stream:
+        stream.writestr("notes.txt", b"x" * 2048)
+    (tmp_path / "empty.zip").touch()
+    (tmp_path / "folder").mkdir()
+    window = MainWindow(tmp_path)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: not window._listing_active)
+    assert not window.selection_label.isVisible()
+
+    index = window.model.index(2)
+    assert window.model.entries[index.row()].path == archive
+    qtbot.mouseClick(
+        window.browser.viewport(),
+        Qt.MouseButton.LeftButton,
+        pos=window.browser.visualRect(index).center(),
+    )
+    size = archive.stat().st_size
+    assert window.selection_label.isVisible()
+    assert window.selection_label.text() == f"Size: {QLocale().formattedDataSize(size)}"
+    assert window.selection_label.toolTip() == f"{size:,} bytes"
+    tooltip = window.model.data(index, Qt.ItemDataRole.ToolTipRole)
+    assert str(archive) in tooltip
+    assert f"({size:,} bytes)" in tooltip
+    window.statusBar().showMessage("Background work in progress")
+    assert window.selection_label.isVisible()
+
+    # Multiple files show their combined size; folders contribute no size.
+    selection = window.browser.selectionModel()
+    selection.select(window.model.index(1), QItemSelectionModel.SelectionFlag.Select)
+    assert window.selection_label.text() == f"2 files: {QLocale().formattedDataSize(size)}"
+    selection.select(window.model.index(0), QItemSelectionModel.SelectionFlag.Select)
+    assert window.selection_label.text() == f"2 files: {QLocale().formattedDataSize(size)}"
+    window.browser.setCurrentIndex(window.model.index(1))
+    assert window.selection_label.toolTip() == "0 bytes"
+    window.browser.setCurrentIndex(window.model.index(0))
+    assert not window.selection_label.isVisible()
+    assert "Size:" not in window.model.data(window.model.index(0), Qt.ItemDataRole.ToolTipRole)
+    window.browser.setCurrentIndex(index)
+    wait_listing(qtbot, window, window.refresh)
+    assert not window.selection_label.isVisible()
+    assert window.selection_label.text() == ""
+    window.close()
+
+
+def test_archive_image_size_and_viewer_selection_info(qtbot, tmp_path, image_bytes):
+    archive = tmp_path / "photos.zip"
+    payload = image_bytes()
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as stream:
+        stream.writestr("photo.png", payload)
+    window = MainWindow(ArchiveLocation(archive))
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: not window._listing_active)
+    index = window.model.index(0)
+    window.browser.setCurrentIndex(index)
+    assert window.selection_label.isVisible()
+    assert window.selection_label.toolTip() == f"{len(payload):,} bytes"
+    assert f"({len(payload):,} bytes)" in window.model.data(index, Qt.ItemDataRole.ToolTipRole)
+    window._open_index(index)
+    assert not window.selection_label.isVisible()
+    qtbot.waitUntil(lambda: window.viewer.item is not None)
+    window.show_grid()
+    assert window.selection_label.isVisible()
+    window.browser.clearSelection()
+    assert not window.selection_label.isVisible()
+    window.close()
 
 
 def test_zip_cover_nested_folders_viewer_and_history(qtbot, tmp_path, image_bytes):
