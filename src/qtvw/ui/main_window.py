@@ -5,7 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import QDir, QFileSystemWatcher, QLocale, QSettings, Qt, QTimer
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction, QImage, QKeySequence
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -34,6 +34,7 @@ from qtvw.domain.locations import (
 from qtvw.domain.preferences import Preferences
 from qtvw.services import Navigation, WorkerService
 from qtvw.services.archive_edit import ArchiveEditService
+from qtvw.services.denoise import DenoiseService
 from qtvw.services.file_moves import FileMoveService
 from qtvw.services.folder_delete import FolderDeleteService, folder_identity
 from qtvw.services.folder_rename import rename_folder
@@ -101,9 +102,13 @@ class MainWindow(QMainWindow):
         self.viewer_generation = 0
         self.requested = set()
         self.viewed = None
+        self._original_image = QImage()
+        self._denoise_generation = 0
         cache_bytes = self.preferences.cache_mb * 1024 * 1024
         self.cache = CacheStore(disk_payload_limit=cache_bytes, disk_limit=cache_bytes)
         self.scheduler = PriorityExecutor(max_workers=self.preferences.workers)
+        self.denoiser = DenoiseService(self.scheduler, self)
+        self.denoiser.finished.connect(self._denoised)
         limits = ArchiveLimits(max_entry_bytes=self.preferences.entry_mb * 1024 * 1024)
         self.archive_editor = ArchiveEditService(self.cache, limits, self)
         self.archive_editor.progress.connect(self._archive_delete_progress)
@@ -238,6 +243,12 @@ class MainWindow(QMainWindow):
         self._action(controls, "100%", "1", self.viewer.actual_size)
         self._action(controls, "Zoom in", "+", lambda: self.viewer.zoom(1.25))
         self._action(controls, "Zoom out", "-", lambda: self.viewer.zoom(0.8))
+        self.denoise_action = self._action(controls, "Denoise", "D", self._toggle_denoise)
+        self.denoise_action.setCheckable(True)
+        self.denoise_action.setEnabled(False)
+        self.denoise_action.setToolTip(
+            "Reduce grain in the current view (D). Original files stay unchanged."
+        )
         # Single-character image shortcuts must not intercept location-field editing.
         for action in controls.actions():
             action.setProperty("help_context", "Image viewer")
@@ -506,6 +517,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Nested ZIP archives are not supported")
 
     def open_image(self, entry):
+        self._reset_denoise()
         self._cancel_orientation_selection()
         logging.getLogger(__name__).info("Open image: %s", entry.display_path)
         self.delete_action.setEnabled(False)
@@ -538,16 +550,66 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(error or "Unable to decode image")
             return
         self.viewer.set_image(image)
+        self._original_image = QImage(image)
+        self.denoise_action.setEnabled(True)
         images = [entry for entry in self.model.entries if entry.kind == "image"]
         position = next((i + 1 for i, e in enumerate(images) if e.identity == identity), 0)
-        self.statusBar().showMessage(
-            f"{self.viewed.name} — {image.width()} × {image.height()} — {position}/{len(images)}"
-        )
+        self._show_image_information()
         for neighbour in (position - 2, position):
             if 0 <= neighbour < len(images):
                 self.image_workers.decode(
                     images[neighbour], self.viewer_generation, priority=PRELOAD, emit=False
                 )
+
+    def _show_image_information(self):
+        if self.viewed is None or self._original_image.isNull():
+            return
+        images = [entry for entry in self.model.entries if entry.kind == "image"]
+        position = next(
+            (i + 1 for i, entry in enumerate(images) if entry.identity == self.viewed.identity), 0
+        )
+        suffix = " — Denoise on" if self.denoise_action.isChecked() else ""
+        self.statusBar().showMessage(
+            f"{self.viewed.name} — {self._original_image.width()} × "
+            f"{self._original_image.height()} — {position}/{len(images)}{suffix}"
+        )
+
+    def _reset_denoise(self):
+        self.denoiser.cancel()
+        self._denoise_generation += 1
+        self._original_image = QImage()
+        self.denoise_action.setChecked(False)
+        self.denoise_action.setEnabled(False)
+
+    def _toggle_denoise(self, enabled):
+        if self.stack.currentWidget() != self.viewer or self._original_image.isNull():
+            self.denoise_action.setChecked(False)
+            return
+        self._denoise_generation += 1
+        if not enabled:
+            self.denoiser.cancel()
+            self.viewer.replace_image(self._original_image)
+            self._show_image_information()
+        elif self.denoiser.start(self._original_image, self._denoise_generation):
+            self.statusBar().showMessage(f"Denoising {self.viewed.name}…")
+        else:
+            self.denoise_action.setChecked(False)
+            self.statusBar().showMessage("Background work queue is full; try Denoise again")
+
+    def _denoised(self, request, image, error):
+        if (
+            self._closing
+            or request != self._denoise_generation
+            or not self.denoise_action.isChecked()
+            or self.stack.currentWidget() != self.viewer
+        ):
+            return
+        if error or image.isNull():
+            self.denoise_action.setChecked(False)
+            self.statusBar().showMessage("Denoise failed: " + (error or "Unable to filter image"))
+            return
+        self.viewer.replace_image(image)
+        self._show_image_information()
 
     def step_image(self, step):
         if self.stack.currentWidget() != self.viewer or self.viewed is None:
@@ -559,6 +621,7 @@ class MainWindow(QMainWindow):
                 break
 
     def show_grid(self):
+        self._reset_denoise()
         self.image_workers.cancel()
         self.viewer_generation += 1
         self.viewer.clear()
@@ -1442,6 +1505,7 @@ class MainWindow(QMainWindow):
             event.ignore()
             return
         self._closing = True
+        self._reset_denoise()
         self._cancel_orientation_selection()
         self._refresh_timer.stop()
         self._thumbnail_timer.stop()

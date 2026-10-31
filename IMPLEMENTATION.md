@@ -575,3 +575,28 @@ New tests exercise F2 in both views, context actions, Unicode names, cancellatio
 invalid selections/names, existing files/folders/links, replaced sources, roots,
 open ZIP images, local/ZIP history, and closing during a rename. Ruff lint and
 formatting pass. Native Ubuntu/macOS pointer interaction remains unverified.
+
+### Follow-up: display-only denoising
+
+The viewer now has a checkable Denoise button and a viewer-scoped D shortcut.
+Every opened image starts unfiltered. Toggling off immediately restores the
+decoded original; replacing the displayed pixmap preserves zoom and pan. The
+status bar reports processing, success, and failures. Help and README describe
+the controls. Local files, ZIP payloads, and persistent thumbnails are unchanged.
+
+`services/denoise.py` applies a mild OpenCV bilateral filter to overlapping
+512-pixel tiles, preserving alpha and avoiding tile seams. NumPy and headless
+OpenCV are runtime dependencies. The service shares the priority scheduler and
+decode memory budget, limits OpenCV to one CPU thread per job, and checks
+cancellation between tiles. Viewer request generations reject obsolete results;
+navigation, disabling the filter, and close cancel pending work. Preview output
+uses RGBA8 pixels and retains source color-space and device-pixel-ratio metadata.
+
+Validation on Linux x86-64 with Python 3.12.3 and the offscreen platform:
+**224 passed, 1 skipped, 1 failed**. The failure remains the known RAR conversion
+`changed` test. Thirteen added tests cover measurable grain reduction, edge/alpha
+preservation, tile seams, tiny images, cancellation, shared memory limits,
+local/ZIP controls, exact original restoration, unchanged sources/cache reuse,
+zoom/pan, default-off navigation/restart behavior, shortcut scope, stale results,
+and filtering errors. Ruff lint/formatting and dependency checks pass. Native
+OpenGL/Ubuntu pointer checks and macOS validation remain pending.

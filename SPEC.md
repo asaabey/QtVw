@@ -15,7 +15,7 @@ The initial release will support:
 - Viewing individual images with zoom, pan, and fullscreen controls.
 - Caching thumbnails and archive indexes to improve repeat browsing.
 
-Image editing, archive creation, archive modification beyond deleting selected images,
+Saving image edits, archive creation, archive modification beyond deleting selected images,
 cloud storage, and nested archives are outside the initial scope.
 
 ## 2. Target platform and technology
@@ -243,6 +243,15 @@ fail. The active backend will be visible, and switching renderers will preserve
 the current image and view. This affects viewer drawing; image decoding and ZIP
 decompression remain separate background operations.
 
+The viewer provides a Denoise toggle button and D shortcut, available after an
+image loads. Apply mild bilateral noise reduction to the displayed image only,
+including images inside ZIPs. Start off for every newly opened image and on app
+launch; toggling off restores the decoded original immediately. Preserve zoom,
+pan, dimensions, and alpha. Filter outside the GUI thread with bounded memory and
+cooperative cancellation; discard results after toggling off or navigating away.
+Report filtering failures without losing the original view. Filtered images are
+never written back to sources or stored in the persistent thumbnail cache.
+
 The initial release will target static JPEG, PNG, WebP, BMP, and TIFF images. Actual decoder availability must be verified in the packaged application. Animated formats, multipage TIFF navigation, HEIC, and camera RAW support are deferred.
 
 ## 9. Caching
@@ -322,6 +331,7 @@ Errors affecting individual items should appear on those items or in the status 
 | `+` / `-` | Zoom in / out |
 | `0` | Fit to window |
 | `1` | Actual size |
+| `D` | Toggle denoising for the current image (default off) |
 | `F11` | Toggle fullscreen |
 | `Esc` | Exit fullscreen, then return to grid |
 | `F5` | Refresh current location |

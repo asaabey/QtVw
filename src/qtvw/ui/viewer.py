@@ -175,6 +175,11 @@ class ImageViewer(QGraphicsView):
                 else Qt.TransformationMode.FastTransformation
             )
 
+    def replace_image(self, image):
+        """Replace displayed pixels while keeping the current zoom and pan."""
+        if self.item is not None:
+            self.item.setPixmap(QPixmap.fromImage(image))
+
     def fit(self):
         self._pending_center = None
         self._restore_timer.stop()

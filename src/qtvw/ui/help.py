@@ -32,6 +32,7 @@ class HelpDialog(QDialog):
             "Next": "Next image in the current sort order",
             "Fit": "Fit the image to the window",
             "100%": "Show the image at actual size",
+            "Denoise": "Toggle grain reduction for the current image (starts off)",
             "Help": "Show keyboard shortcuts and help",
             "Delete images": "Confirm deletion of selected images from the current ZIP",
             "Rename folder…": "Rename the selected filesystem folder",
@@ -80,8 +81,10 @@ class HelpDialog(QDialog):
             "There is no Trash or undo.</p>"
             "<h3>Image smoothing</h3><p>Preferences → Browsing → Smooth image scaling "
             "controls interpolation when fitting or zooming. Turn it off for crisp pixel art. "
-            "Blur, denoise, and sharpening filters are not implemented; "
-            "source images are unchanged.</p>"
+            "In the image viewer, click Denoise or press D to reduce grain. It starts off "
+            "for every image; toggle it off to restore the original view. Processing runs "
+            "in the background and keeps your zoom and pan. Original files and ZIP contents "
+            "are unchanged.</p>"
         )
         layout.addWidget(self.content)
         self.logs = QLabel("Log folder: " + str(log_location()))

@@ -14,6 +14,15 @@ startup behavior, cache controls, and resource limits. Ubuntu packaging and
 release performance validation remain milestone 5. A per-user Ubuntu installer
 is available below.
 
+## Reduce grain while viewing
+
+Open an image and click **Denoise** in the image controls, or press **D**, to
+apply mild noise reduction. Click or press D again to restore the original view.
+Denoising starts **off** for every image. It runs in the background, preserves
+zoom and pan, and works with local images and images inside ZIPs. Original files
+and ZIP contents stay unchanged. NumPy and headless OpenCV are installed with
+QtVw; update an existing installation to get the new dependencies.
+
 ## Convert RAR archives to ZIP
 
 RAR files appear in the thumbnail grid. Right-click one and choose **Convert to
